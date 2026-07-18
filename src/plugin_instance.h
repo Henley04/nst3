@@ -32,6 +32,19 @@
 
 namespace nst3 {
 
+// One audio bus as far as JS sees it: a sequence of channel Float32Arrays.
+// Used at process() time to map user-supplied arrays to per-bus AudioBusBuffers.
+struct AudioBusChannelPointers {
+    std::vector<float*> channelPtrs;
+};
+
+// Info for each declared audio bus, captured at load time.
+struct AudioBusInfoEntry {
+    int32_t channelCount = 0;
+    Steinberg::Vst::SpeakerArrangement arrangement = 0;
+    bool isActive = false;
+};
+
 // Info returned by getInfo()
 struct PluginInstanceInfo {
     std::string name;
@@ -51,7 +64,8 @@ struct PluginInstanceInfo {
 };
 
 // PluginInstance is a napi ObjectWrap that owns one live VST3 plugin instance.
-class PluginInstance : public Napi::ObjectWrap<PluginInstance> {
+class PluginInstance : public Napi::ObjectWrap<PluginInstance>,
+                       public IPerformEditSink {
 public:
     static Napi::Object Init(Napi::Env env, Napi::Object exports);
     static Napi::FunctionReference constructor;
@@ -62,6 +76,10 @@ public:
 
     PluginInstance(const Napi::CallbackInfo& info);
     ~PluginInstance() override;
+
+    //--- IPerformEditSink (called by ComponentHandler on performEdit) ---
+    void onPerformEdit(Steinberg::Vst::ParamID id,
+                       Steinberg::Vst::ParamValue valueNormalized) override;
 
     //--- Lifecycle ------------------------------------------------------
     Napi::Value Dispose(const Napi::CallbackInfo& info);
@@ -110,6 +128,29 @@ private:
     // Forward restart callback to the JS side via TSFN.
     void emitRestart(int32_t flags);
 
+    // Resolve per-bus AudioBusBuffers from a JS `inputs`/`outputs` value.
+    // `value` may be either:
+    //   - A flat array of Float32Array channels (single-bus backward compat),
+    //   - An array of arrays of Float32Array channels (multi-bus).
+    // `outPtrs` is filled with the channel pointer vectors per bus.
+    // Returns false (and throws) if buffer lengths are inconsistent.
+    bool resolveAudioBuses(Napi::Env env, Napi::Value value,
+                           const std::vector<AudioBusInfoEntry>& busInfos,
+                           std::vector<std::vector<float*>>& outPtrs,
+                           int32_t numSamples, const char* dirName);
+
+    // Try to map a MIDI controller (CC/PC/CP/PB) to a plugin parameter via
+    // IMidiMapping. On success, sets the parameter on the controller and queues
+    // the change for the next process() call. Returns true if mapped.
+    bool tryMapMidiController(int16_t channel,
+                              Steinberg::Vst::CtrlNumber ctrlNumber,
+                              double normalizedValue,
+                              Steinberg::Vst::ParamID* outParamId = nullptr);
+
+    // Negotiate speaker arrangements: query each bus's current arrangement and
+    // try to lock in stereo (or mono as fallback) for stereo plugins.
+    void negotiateSpeakerArrangements();
+
     //--- Owned state ----------------------------------------------------
     VST3::Hosting::Module::Ptr module_;
     NstHostApplication* hostApp_ = nullptr; // not owned (Host owns it)
@@ -118,6 +159,7 @@ private:
     Steinberg::IPtr<Steinberg::Vst::IComponent> component_;
     Steinberg::IPtr<Steinberg::Vst::IAudioProcessor> audioProcessor_;
     Steinberg::IPtr<Steinberg::Vst::IEditController> controller_;
+    Steinberg::IPtr<Steinberg::Vst::IMidiMapping> midiMapping_;
     Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> componentCP_;
     Steinberg::IPtr<Steinberg::Vst::ConnectionProxy> controllerCP_;
 
@@ -129,12 +171,21 @@ private:
     bool faulted_ = false;
     std::atomic<bool> disposed_{false};
 
+    // Per-bus info, captured at load time. Indexed by bus direction+index.
+    std::vector<AudioBusInfoEntry> inputBusInfos_;
+    std::vector<AudioBusInfoEntry> outputBusInfos_;
+
     // Process data (reused across calls — zero allocation steady state)
     Steinberg::Vst::ProcessData processData_;
-    Steinberg::Vst::AudioBusBuffers inputBuffers_;
-    Steinberg::Vst::AudioBusBuffers outputBuffers_;
-    std::vector<float*> inputChannelPtrs_;
-    std::vector<float*> outputChannelPtrs_;
+    // Per-bus AudioBusBuffers; one entry per declared input/output bus.
+    std::vector<Steinberg::Vst::AudioBusBuffers> inputBuffers_;
+    std::vector<Steinberg::Vst::AudioBusBuffers> outputBuffers_;
+    // Per-bus channel pointer storage (channelBuffers32 arrays). Indexed by bus.
+    std::vector<std::vector<float*>> inputChannelPtrsPerBus_;
+    std::vector<std::vector<float*>> outputChannelPtrsPerBus_;
+
+    // ProcessContext reused across calls; sample position advances per block.
+    Steinberg::Vst::ProcessContext processContext_;
 
     // Parameter changes (input + output)
     Steinberg::Vst::ParameterChanges inputParams_;

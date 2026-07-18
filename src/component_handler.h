@@ -18,6 +18,17 @@ namespace nst3 {
 // Forward declarations
 class PluginInstance;
 
+// Interface used by ComponentHandler to forward performEdit() calls back to
+// the owning PluginInstance so that the change is added to the input
+// IParameterChanges queue for the next process() call.
+struct IPerformEditSink {
+    virtual ~IPerformEditSink() = default;
+    // Apply a controller-driven parameter change: set the controller value and
+    // queue a point at sample offset 0 for the next process call.
+    virtual void onPerformEdit(Steinberg::Vst::ParamID id,
+                              Steinberg::Vst::ParamValue valueNormalized) = 0;
+};
+
 // Callback signature for restart notifications delivered to JS.
 using RestartCallback = std::function<void(int32_t flags)>;
 
@@ -33,6 +44,10 @@ class ComponentHandler final
 public:
     ComponentHandler();
     ~ComponentHandler() noexcept override;
+
+    // Set the sink that receives performEdit() calls. The sink is owned
+    // externally (typically the PluginInstance). Set to nullptr to disable.
+    void setPerformEditSink(IPerformEditSink* sink) { performEditSink_ = sink; }
 
     // Set the PluginInstance that owns this handler. Used to forward
     // beginEdit/performEdit/endEdit to the parameter change queue.
@@ -61,6 +76,7 @@ public:
 
 private:
     PluginInstance* instance_ = nullptr;
+    IPerformEditSink* performEditSink_ = nullptr;
     RestartCallback restartCb_;
     std::atomic<int32_t> lastRestartFlags_{0};
 };
