@@ -25,6 +25,7 @@ set(VST3_SDK_SOURCES
     ${VST3_SDK_ROOT}/public.sdk/source/main/pluginfactory.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/main/moduleinit.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/common/commoniids.cpp
+    ${VST3_SDK_ROOT}/public.sdk/source/common/commonstringconvert.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/common/memorystream.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/common/pluginview.cpp
     ${VST3_SDK_ROOT}/public.sdk/source/vst/utility/stringconvert.cpp
@@ -112,7 +113,7 @@ elseif(WIN32)
         LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
     )
     target_compile_definitions(Gain PRIVATE
-        WINDOWS=1 _DEBUG=1 _WIN32 _WINDOWS NOMINMAX
+        WINDOWS=1 _WIN32 _WINDOWS NOMINMAX
         _CRT_SECURE_NO_WARNINGS _SCL_SECURE_NO_WARNINGS
     )
 endif()
