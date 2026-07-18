@@ -5,7 +5,6 @@
 //-----------------------------------------------------------------------------
 #include "discovery.h"
 
-#include <filesystem>
 #include <fstream>
 #include <set>
 #include <sstream>
@@ -16,7 +15,17 @@
 #include "public.sdk/source/vst/hosting/module.h"
 #include "public.sdk/source/vst/utility/uid.h"
 
+// macOS: std::filesystem requires MACOSX_DEPLOYMENT_TARGET >= 10.15, but the
+// project intentionally targets 10.13 (High Sierra) for backwards compat.
+// Fall back to POSIX dirent + stat for directory walking on Apple platforms.
+#if defined(__APPLE__)
+#include <dirent.h>
+#include <sys/stat.h>
+#include <limits.h>
+#else
+#include <filesystem>
 namespace fs = std::filesystem;
+#endif
 
 namespace nst3 {
 
@@ -62,10 +71,72 @@ std::vector<PluginClassInfo> collectClassInfos(const VST3::Hosting::Module::Ptr&
     return result;
 }
 
+bool endsWithVst3(const std::string& s) {
+    static const std::string ext = ".vst3";
+    return s.size() >= ext.size() &&
+           s.compare(s.size() - ext.size(), ext.size(), ext) == 0;
+}
+
+#if defined(__APPLE__)
+// POSIX recursive walk used on macOS to avoid std::filesystem's 10.15
+// requirement. Dedupes via canonical paths (realpath). Skips unreadable
+// entries silently, mirroring skip_permission_denied best-effort behavior.
+void walkDirPosix(const std::string& dir, std::set<std::string>& seen,
+                  std::vector<std::string>& out) {
+    DIR* dh = opendir(dir.c_str());
+    if (!dh) return;
+    struct dirent* entry;
+    while ((entry = readdir(dh)) != nullptr) {
+        std::string name = entry->d_name;
+        if (name == "." || name == "..") continue;
+
+        std::string full = dir;
+        if (full.empty() || full.back() != '/') full.push_back('/');
+        full += name;
+
+        struct stat st;
+        if (lstat(full.c_str(), &st) != 0) continue;
+
+        if (S_ISDIR(st.st_mode)) {
+            walkDirPosix(full, seen, out);
+            continue;
+        }
+        if (!S_ISREG(st.st_mode) && !S_ISLNK(st.st_mode)) continue;
+        if (!endsWithVst3(name)) continue;
+
+        // Canonicalize for dedup (follows symlinks like weakly_canonical).
+        char resolved[PATH_MAX];
+        if (!realpath(full.c_str(), resolved)) {
+            // realpath fails on broken symlinks; fall back to the raw path.
+            if (seen.insert(full).second) out.push_back(full);
+            continue;
+        }
+        if (seen.insert(resolved).second) out.push_back(resolved);
+    }
+    closedir(dh);
+}
+#endif
+
 } // namespace
 
 std::vector<PluginClassInfo> scanDirectory(const std::string& dir) {
     std::vector<PluginClassInfo> result;
+
+#if defined(__APPLE__)
+    // macOS: POSIX walk (std::filesystem requires macOS 10.15+).
+    struct stat dirSt;
+    if (stat(dir.c_str(), &dirSt) != 0 || !S_ISDIR(dirSt.st_mode)) return result;
+    std::set<std::string> seen;
+    std::vector<std::string> candidates;
+    walkDirPosix(dir, seen, candidates);
+    for (const auto& path : candidates) {
+        std::string errDesc;
+        auto module = VST3::Hosting::Module::create(path, errDesc);
+        if (!module) continue; // skip unloadable modules silently
+        auto infos = collectClassInfos(module);
+        for (auto& info : infos) result.push_back(std::move(info));
+    }
+#else
     std::error_code ec;
     if (!fs::exists(dir, ec) || !fs::is_directory(dir, ec)) return result;
 
@@ -86,6 +157,7 @@ std::vector<PluginClassInfo> scanDirectory(const std::string& dir) {
         auto infos = collectClassInfos(module);
         for (auto& info : infos) result.push_back(std::move(info));
     }
+#endif
     return result;
 }
 

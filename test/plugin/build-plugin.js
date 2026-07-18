@@ -46,10 +46,13 @@ function run(cmd, args, cwd) {
 function resolveBundlePath() {
     const bundleDir = path.join(BUILD_DIR, 'Gain.vst3');
     if (process.platform === 'win32') {
-        // On Windows the .vst3 file is a DLL placed under build/Release/Gain.vst3
-        // (or build/Gain.vst3 depending on generator).
+        // On Windows the .vst3 file is a DLL. With the Visual Studio multi-config
+        // generator + --config Release, the default output dir is build/Release/.
+        // Some generator/setting combinations place it under build/Release/Release/
+        // (when LIBRARY_OUTPUT_DIRECTORY is explicitly set); check both.
         const candidates = [
             path.join(BUILD_DIR, 'Release', 'Gain.vst3'),
+            path.join(BUILD_DIR, 'Release', 'Release', 'Gain.vst3'),
             path.join(BUILD_DIR, 'Gain.vst3'),
         ];
         for (const c of candidates) {
