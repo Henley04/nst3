@@ -58,6 +58,11 @@
         "third_party/vst3sdk/public.sdk/source/common/commonstringconvert.cpp",
         "third_party/vst3sdk/public.sdk/source/common/memorystream.cpp",
         "third_party/vst3sdk/public.sdk/source/common/pluginview.cpp",
+        # ThreadChecker: all three platform variants are guarded by SMTG_OS_*
+        # macros, so only the one matching the build OS is actually compiled.
+        "third_party/vst3sdk/public.sdk/source/common/threadchecker_win32.cpp",
+        "third_party/vst3sdk/public.sdk/source/common/threadchecker_linux.cpp",
+        "third_party/vst3sdk/public.sdk/source/common/threadchecker_mac.mm",
         # VST3 SDK: public.sdk vst hosting
         "third_party/vst3sdk/public.sdk/source/vst/hosting/module.cpp",
         "third_party/vst3sdk/public.sdk/source/vst/hosting/hostclasses.cpp",
