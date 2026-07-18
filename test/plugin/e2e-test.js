@@ -2,9 +2,10 @@
 // Verifies: load, info, parameters, processing at multiple gain values,
 // state save/load round-trip into a fresh instance, and dispose lifecycle.
 const assert = require('assert');
-const nst3 = require('../../build/Release/nst3.node');
+const path = require('path');
+const nst3 = require(path.join(__dirname, '..', '..', 'build', 'Release', 'nst3.node'));
 
-const PLUGIN_PATH = '/workspace/test/plugin/build/Gain.vst3';
+const PLUGIN_PATH = path.join(__dirname, 'build', 'Gain.vst3');
 const TOL = 1e-6;
 
 function makeBuf(value, n) {
