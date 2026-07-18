@@ -1,0 +1,31 @@
+# Node / npm
+node_modules/
+npm-debug.log*
+.npm/
+
+# Build artifacts
+build/
+out/
+*.node
+prebuilds/*.node
+prebuilds/**/*.node
+!prebuilds/.gitkeep
+
+# Test plugin build
+test/plugin/build/
+test/plugin/*.vst3
+
+# IDE / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+
+# Rust / cargo (if any future work)
+target/
+
+# CI temp
+tmp/
+.cache/

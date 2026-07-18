@@ -3,61 +3,65 @@
 Each checkpoint maps to a requirement or cross-cutting concern from `spec.md`.
 Verify the relevant code/system behavior and check the box when satisfied.
 
-## Foundation & Scaffolding
-- [ ] `Cargo.toml` workspace exists with `nst3-host` and `nst3-napi` crates; `crate-type = ["cdylib"]` is set on the napi crate
-- [ ] `package.json` declares `name: nst3`, `engines.node >=16.17`, `napi` field with `binaryName: "nst3"` and all 4 target triples
-- [ ] `npm run build` produces `nst3.<platform>.<arch>.node` on the host machine
-- [ ] `npm test` runs and passes the smoke test
+Tech stack: **C++17 + node-addon-api + official VST3 SDK (MIT) + prebuildify**.
 
-## VST3 FFI Bindings
-- [ ] All required VST3 interface vtables are defined in Rust (IPluginFactory{,2,3}, IComponent, IAudioProcessor, IEditController{,2}, IConnectionPoint, IParamValueQueue, IParameterChanges, IEventList, IHostApplication, IComponentHandler{,2,3}, IMessage, IAttributeList, IBStream, IStreamAttributes, IPlugView)
-- [ ] TUIDs are defined as `pub const` 16-byte arrays for every interface
-- [ ] `VstPtr<T>` smart pointer calls `release()` on drop
-- [ ] No GPL-licensed crates are pulled in (verify `cargo tree -e features` shows no `vst3-sys` / `vst3-host`)
+## Foundation & Scaffolding
+- [ ] `package.json` exists with `node-addon-api`, `node-gyp`, `node-gyp-build`, `prebuildify` declared
+- [ ] `engines.node` set to `>=16.17`
+- [ ] `third_party/vst3sdk/` is a git submodule pointing to an MIT-licensed Steinberg VST3 SDK release (v3.7.9+)
+- [ ] `binding.gyp` configures target `nst3.node`, C++17, includes VST3 SDK headers, compiles required SDK sources (`base/source/*`, `base/thread/source/*`, `public.sdk/source/common/*`, `public.sdk/source/vst/hosting/*`)
+- [ ] `npm run build` produces `build/Release/nst3.node` on the host platform
+- [ ] `node -e "console.log(require('./').version())"` returns the SDK version string
 
 ## Module Loading & Discovery
-- [ ] macOS `.vst3` bundle path resolution works (`/path/X.vst3/Contents/MacOS/X`)
-- [ ] Linux `.vst3` bundle path resolution works (`/path/X.vst3/Contents/x86_64-linux/X.so`)
-- [ ] Windows `.vst3` file path resolution works (direct DLL load)
-- [ ] `Host.scanDefaultLocations()` returns installed plugins on each platform
+- [ ] `VST3::Hosting::Module::create(path, errCb)` is used for cross-platform loading
+- [ ] macOS `.vst3` bundle layout is handled by the SDK helper (no manual path munging)
+- [ ] Linux `.vst3` bundle layout is handled by the SDK helper
+- [ ] Windows `.vst3` file is loaded directly
+- [ ] `Host.scanDefaultLocations()` returns the platform-specific standard paths
 - [ ] `Host.scanDirectory(path)` recursively finds `.vst3` modules
-- [ ] `Host.inspectPlugin(path)` returns metadata without instantiating DSP
+- [ ] `Host.inspectPlugin(path)` returns metadata without instantiating components
+- [ ] `PluginInfo` JS object contains `{ path, name, vendor, version, category, subCategories, sdkVersion, factoryInfo, classId }`
 
 ## Plugin Instantiation
 - [ ] `host.load(path, opts)` returns a `PluginInstance` for a valid plugin
-- [ ] `IComponent` is created via factory `createInstance`
+- [ ] `IComponent` is created via `factory->createInstance(cid, IComponent::iid)`
 - [ ] `IAudioProcessor` is queried from the component
-- [ ] `IEditController` is created (separately or via queryInterface) and connected via `IConnectionPoint`
-- [ ] `IComponent::setHostApplication` is called with our `HostApplication`
-- [ ] `BusInfo` for audio in/out and MIDI in/out is read and exposed via `getInfo()`
+- [ ] `IComponent::initialize(hostApplication)` is called with our `NstHostApplication`
+- [ ] `IEditController` is created and `initialize`d
+- [ ] Component and controller are connected via `IConnectionPoint` (both directions)
+- [ ] `IEditController::setComponentHandler` is called with our `NstComponentHandler`
+- [ ] `BusInfo` is read and exposed via `getInfo()`
+- [ ] Default stereo buses are activated via `IComponent::activateBus`
 
 ## Host Interfaces
-- [ ] `HostApplication` returns "Node.js VST3 Host" from `getName`
-- [ ] `HostApplication::createMessage` returns a working `IMessage`
-- [ ] `ComponentHandler::beginEdit/performEdit/endEdit` cycle works (no crash, queue updated)
-- [ ] `ComponentHandler::restartComponent` emits a `restart` JS event with restart flags
-- [ ] `BStream` correctly serializes/deserializes bytes for `IBStream::read`/`write`/`seek`
+- [ ] `NstHostApplication::getName` returns `"Node.js VST3 Host"`
+- [ ] `NstHostApplication::createMessage` returns a working `IMessage`
+- [ ] `NstComponentHandler::beginEdit/performEdit/endEdit` cycle works (no crash, queue updated)
+- [ ] `NstComponentHandler::restartComponent` emits a JS `restart` event via `Napi::ThreadSafeFunction` with restart flags
 - [ ] Connection-point messages route between component and controller
 
 ## Audio Processing
-- [ ] `setActive(true)` calls `IAudioProcessor::setActive(true)` with the configured `ProcessSetup`
+- [ ] `setupProcessing` is called with the configured `ProcessSetup` before `setActive`
+- [ ] `setActive(true)` calls both `IComponent::setActive(true)` and `IAudioProcessor::setActive(true)`
 - [ ] `setProcessing(true)` calls `IAudioProcessor::setProcessing(true)`
 - [ ] `process({inputs, outputs, numSamples})` calls `IAudioProcessor::process` and fills `outputs`
-- [ ] Audio buffers are zero-copy (no copy between JS Float32Array and Rust process call — verify via address comparison in test)
-- [ ] `getLatency()` returns the value reported by the plugin
-- [ ] Speaker arrangement is set to Stereo (L R) by default when supported
+- [ ] Audio buffers are zero-copy (`Float32Array::Data()` passed directly to `AudioBusBuffers`)
+- [ ] `getLatency()` returns the value reported by `IAudioProcessor::getLatencySamples`
+- [ ] Speaker arrangement defaults to Stereo when supported by the plugin
 - [ ] `setProcessing(false)` and `setActive(false)` clean up properly
 
 ## Parameter Management
 - [ ] `getParameterCount()` matches `IEditController::getParameterCount`
-- [ ] `getParameterInfo(i)` returns all fields correctly (title, units, flags, defaultNormalizedValue)
+- [ ] `getParameterInfo(i)` returns all fields (title, shortTitle, units, stepCount, defaultNormalizedValue, unitId, flags) with `String128` converted to UTF-8
 - [ ] `getParameter(id)` returns the current normalized value
 - [ ] `setParameter(id, value)` updates controller and queues change for next process
 - [ ] `setParameters([...])` applies multiple atomically
 - [ ] `formatParameter(id, value)` returns the plugin's display string
-- [ ] Parameter change queue is reused across `process` calls (no per-call allocation)
+- [ ] `ParameterChangesContainer` is reused across `process` calls (no per-call allocation)
 
 ## MIDI & Events
+- [ ] Input `EventListContainer` is reused and cleared before each `process`
 - [ ] `addMidiEvent({type, channel, ...})` adds a VST3 `Event` to the input list
 - [ ] `addMidiBytes(sampleOffset, [byte1, byte2, byte3])` parses raw MIDI correctly
 - [ ] All supported MIDI event types are mapped (noteOn, noteOff, polyPressure, cc, programChange, channelPressure, pitchBend, sysEx)
@@ -66,60 +70,70 @@ Verify the relevant code/system behavior and check the box when satisfied.
 
 ## State Persistence
 - [ ] `saveState()` returns a `Buffer` with the plugin's serialized state
-- [ ] `loadState(buffer)` restores the plugin state (component + controller)
-- [ ] Round-trip preserves parameter values and internal state
+- [ ] `loadState(buffer)` restores the plugin state (component + controller via `setComponentState`)
+- [ ] Round-trip preserves parameter values: save → mutate → load → values match
 
 ## Error Handling
 - [ ] Loading a nonexistent path throws with `code: 'VST3_LOAD_FAILED'`
 - [ ] Calling `process` before `setActive(true)` throws with `code: 'VST3_NOT_ACTIVE'`
 - [ ] Calling `process` before `setProcessing(true)` throws with `code: 'VST3_NOT_PROCESSING'`
 - [ ] Plugin fault during process marks the instance faulted and subsequent calls throw `VST3_FAULTED`
+- [ ] All plugin calls wrapped in C++ try/catch and translated to `Napi::Error` with `code` field
 - [ ] `dispose()` is idempotent (safe to call twice)
-- [ ] `PluginInstance` `Drop` releases all COM refs and unloads the module
+- [ ] `PluginInstance::Finalize` calls `dispose` if not already called
+- [ ] JS arguments are validated (types, ranges) before passing to SDK
 
-## napi-rs Bindings
-- [ ] `Host` class is exported with all discovery methods
+## napi Bindings
+- [ ] `Host` class is exported with constructor and all discovery methods (`scanDefaultLocations`, `scanDirectory`, `inspectPlugin`, `load`)
 - [ ] `PluginInstance` class is exported with all processing/parameter/MIDI/state methods
-- [ ] `index.d.ts` is auto-generated by `napi build` and shipped in the package
+- [ ] `index.d.ts` is hand-written and shipped in the package, covering all public types
 - [ ] All public types are exported (`HostOptions`, `LoadOptions`, `PluginInfo`, `ParameterInfo`, `MidiEvent`, `ProcessBlock`, enums)
-- [ ] `Symbol.dispose` is implemented for `using` syntax support
+- [ ] `on('restart', cb)` works via `Napi::ThreadSafeFunction`
+- [ ] `version()` static function returns the VST3 SDK version string
 
 ## Distribution & CI
-- [ ] `.github/workflows/CI.yml` builds for windows-x64-msvc, darwin-x64, darwin-arm64, linux-x64-gnu
+- [ ] `.github/workflows/CI.yml` builds for windows-x64, darwin-x64, darwin-arm64, linux-x64
+- [ ] Each CI job runs `npm ci`, `npm test`, then `prebuildify`
 - [ ] `MACOSX_DEPLOYMENT_TARGET=10.13` is set for macOS builds
-- [ ] Linux build installs `libasound2-dev` (or no native deps if not needed)
-- [ ] On tag push: GitHub Release is created with `.node` artifacts
-- [ ] On tag push: npm publish publishes 4 platform packages + main `nst3` package
-- [ ] `optionalDependencies` in main `package.json` matches platform package names and versions
+- [ ] Linux build installs required dev packages (libasound2-dev, libstdc++-12-dev)
+- [ ] `prebuilds/` artifacts are uploaded from each job and collected in a final release job
+- [ ] On tag push: a single npm package is published containing all 4 prebuilds
+- [ ] `package.json` `files` field includes `index.js`, `index.d.ts`, `prebuilds/`, `binding.gyp`, `src/`, `third_party/`
+- [ ] `scripts.install` is `node-gyp-build` (uses prebuilds; falls back to source build)
 
 ## Tests & Mock Plugin
-- [ ] `crates/nst3-test-plugin` compiles to a real `.vst3` module for all 4 targets
-- [ ] The test plugin is loadable by `nst3` AND by a real DAW (reaper/ableton) for sanity
-- [ ] Integration tests pass on all CI platforms using the platform-specific test plugin
-- [ ] State round-trip test passes
-- [ ] MIDI event test passes (synth plugin produces non-silent output on noteOn)
-- [ ] Error-code tests pass for all documented error scenarios
+- [x] `test/plugin/` contains a `GainProcessor` C++ VST3 plugin using `SingleComponentEffect`
+- [x] Test plugin has 1 parameter (Gain 0..1) and stereo in/out
+- [ ] Test plugin is built by CI for all 4 target platforms and uploaded as artifact
+- [ ] `test/discovery.test.js` passes (PluginInfo fields verified)
+- [ ] `test/load.test.js` passes (info matches expected)
+- [ ] `test/process.test.js` passes (gain=0 → silence; gain=1 → passthrough; zero-copy verified)
+- [ ] `test/parameters.test.js` passes (info, get/set round-trip, formatParameter non-empty)
+- [ ] `test/midi.test.js` passes (events accepted; synth output non-silent if TestSynth built)
+- [ ] `test/state.test.js` passes (round-trip preserves params)
+- [ ] `test/lifecycle.test.js` passes (dispose idempotent; load+dispose+load works; GC finalizer safe)
+- [ ] `test/errors.test.js` passes (all documented error codes triggered correctly)
 
 ## Examples & Docs
-- [ ] `examples/process-file.js` runs end-to-end and produces a valid output WAV
-- [ ] `examples/scan-plugins.js` lists installed plugins on a developer machine
-- [ ] `examples/midi-synth.js` plays a MIDI sequence through a synth plugin
-- [ ] `examples/parameter-sweep.js` automates a parameter across multiple blocks
-- [ ] `README.md` documents install, quick start, supported platforms, and links to examples
-- [ ] `docs/API.md` (or auto-generated typedoc) covers every public class and method
+- [ ] `examples/scan-plugins.js` runs end-to-end
+- [ ] `examples/process-file.js` reads WAV, processes, writes WAV
+- [ ] `examples/midi-synth.js` schedules MIDI notes and writes output WAV
+- [ ] `examples/parameter-sweep.js` automates a parameter across blocks
+- [ ] `README.md` documents install, quick start, supported platforms, links to examples
+- [ ] `docs/API.md` (or typedoc) covers every public class and method
 - [ ] `CHANGELOG.md` has a `## 0.1.0` entry
-- [ ] `CONTRIBUTING.md` covers building from source and the CI flow
+- [ ] `CONTRIBUTING.md` covers building from source and CI flow
 
 ## Performance
-- [ ] `process()` path allocates zero bytes after warmup (verify with a debug assertion or allocator hook)
-- [ ] No locks are held during the `IAudioProcessor::process` call
-- [ ] Throughput benchmark: <1x realtime on commodity hardware for the test gain plugin at 48kHz / 512 samples
+- [ ] `process()` path allocates zero bytes after warmup (no `new`/`malloc`/`std::vector` resize on steady state)
+- [ ] No locks held during the `IAudioProcessor::process` call (use `std::atomic` for restart flag)
+- [ ] Throughput benchmark: <1x realtime on commodity hardware for the gain plugin at 48kHz / 512 samples
 
 ## Final
-- [ ] `.gitignore` excludes `target/`, `node_modules/`, `*.node`, `npm/` platform subdirs
-- [ ] `rust-toolchain.toml` pins stable Rust >=1.88
-- [ ] License fields in `package.json` and Cargo manifests say MIT
+- [ ] `.gitignore` excludes `build/`, `node_modules/`, `*.node`, `prebuilds/*.node`, `test/plugin/build/`
+- [ ] `binding.gyp` references SDK submodule sources so `git submodule update --init --recursive && npm run build` works on a clean clone
+- [ ] License fields in `package.json` and `LICENSE` say MIT; VST3 SDK submodule is also MIT
 - [ ] `git push origin main` succeeds
 - [ ] CI passes on all 4 platforms
-- [ ] Tag `v0.1.0` is pushed; release artifacts and npm packages publish successfully
-- [ ] `npm install nst3` on a clean machine loads the binary without compilation
+- [ ] Tag `v0.1.0` is pushed; release artifacts and npm package publish successfully
+- [ ] `npm install nst3` on a clean machine (no toolchain) loads the binary without compilation
