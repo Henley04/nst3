@@ -155,9 +155,9 @@ Tech stack: **C++17 + node-addon-api + official VST3 SDK (MIT) + prebuildify**.
   - [x] SubTask 20.1: Add `.gitignore` (build/, node_modules/, *.node, prebuilds/*.node, test/plugin/build/)
   - [x] SubTask 20.2: Add `binding.gyp` includes for SDK submodule sources; verify `git submodule update --init --recursive && npm run build` works on a clean clone
   - [x] SubTask 20.3: Confirm MIT license fields in `package.json` and `LICENSE` covers both our code and the VST3 SDK submodule
-  - [ ] SubTask 20.4: Verify `git push origin main` succeeds and CI passes on all 4 platforms
-  - [ ] SubTask 20.5: Tag `v0.1.0` and confirm Release artifacts + npm package publish successfully
-  - [ ] SubTask 20.6: Verify `npm install nst3` on a clean machine (no toolchain) loads the binary without compilation
+  - [ ] SubTask 20.4: Verify `git push origin main` succeeds and CI passes on all 4 platforms — **BLOCKED: sandbox lacks GitHub credentials; commit `3b9304a` ready on branch `trae/agent-AiPjCN`**
+  - [ ] SubTask 20.5: Tag `v0.1.0` and confirm Release artifacts + npm package publish successfully — **BLOCKED: requires 20.4**
+  - [ ] SubTask 20.6: Verify `npm install nst3` on a clean machine (no toolchain) loads the binary without compilation — **BLOCKED: requires 20.5**
 
 # Task Dependencies
 
