@@ -457,8 +457,9 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
                        "block.numSamples must be in (0, " + std::to_string(opts_.maxBlockSize) + "]");
     }
 
-    // Collect input Float32Arrays
-    std::vector<Napi::Float32Array> inputsArr;
+    // Collect input Float32Array channel pointers directly into the reused
+    // member vector (zero-copy, zero-alloc on the steady-state path).
+    size_t inCount = 0;
     if (block.Has("inputs") && block.Get("inputs").IsArray()) {
         Napi::Array arr = block.Get("inputs").As<Napi::Array>();
         for (uint32_t i = 0; i < arr.Length(); ++i) {
@@ -466,13 +467,22 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
             if (!v.IsTypedArray() || v.As<Napi::TypedArray>().TypedArrayType() != napi_float32_array) {
                 throwNapiError(env, ErrorCode::InvalidBuffer, "inputs must be Float32Array[]");
             }
-            inputsArr.push_back(v.As<Napi::Float32Array>());
-            if (static_cast<int32_t>(inputsArr.back().ElementLength()) < numSamples) {
+            Napi::Float32Array fa = v.As<Napi::Float32Array>();
+            if (static_cast<int32_t>(fa.ElementLength()) < numSamples) {
                 throwNapiError(env, ErrorCode::InvalidBuffer, "inputs buffer length < numSamples");
             }
+            if (inCount < inputChannelPtrs_.size()) {
+                inputChannelPtrs_[inCount] = fa.Data();
+            }
+            ++inCount;
         }
     }
-    std::vector<Napi::Float32Array> outputsArr;
+    if (inCount > inputChannelPtrs_.size()) {
+        throwNapiError(env, ErrorCode::InvalidBuffer,
+                       "inputs channel count exceeds allocated input buses");
+    }
+
+    size_t outCount = 0;
     if (block.Has("outputs") && block.Get("outputs").IsArray()) {
         Napi::Array arr = block.Get("outputs").As<Napi::Array>();
         for (uint32_t i = 0; i < arr.Length(); ++i) {
@@ -480,22 +490,22 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
             if (!v.IsTypedArray() || v.As<Napi::TypedArray>().TypedArrayType() != napi_float32_array) {
                 throwNapiError(env, ErrorCode::InvalidBuffer, "outputs must be Float32Array[]");
             }
-            outputsArr.push_back(v.As<Napi::Float32Array>());
-            if (static_cast<int32_t>(outputsArr.back().ElementLength()) < numSamples) {
+            Napi::Float32Array fa = v.As<Napi::Float32Array>();
+            if (static_cast<int32_t>(fa.ElementLength()) < numSamples) {
                 throwNapiError(env, ErrorCode::InvalidBuffer, "outputs buffer length < numSamples");
             }
+            if (outCount < outputChannelPtrs_.size()) {
+                outputChannelPtrs_[outCount] = fa.Data();
+            }
+            ++outCount;
         }
+    }
+    if (outCount > outputChannelPtrs_.size()) {
+        throwNapiError(env, ErrorCode::InvalidBuffer,
+                       "outputs channel count exceeds allocated output buses");
     }
 
     return translateExceptions(env, [&]() -> Napi::Value {
-        // Wire up AudioBusBuffers (zero-copy from JS Float32Array)
-        for (size_t i = 0; i < inputChannelPtrs_.size() && i < inputsArr.size(); ++i) {
-            inputChannelPtrs_[i] = inputsArr[i].Data();
-        }
-        for (size_t i = 0; i < outputChannelPtrs_.size() && i < outputsArr.size(); ++i) {
-            outputChannelPtrs_[i] = outputsArr[i].Data();
-        }
-
         inputBuffers_.numChannels = static_cast<Steinberg::int32>(inputChannelPtrs_.size());
         inputBuffers_.channelBuffers32 = inputChannelPtrs_.data();
         outputBuffers_.numChannels = static_cast<Steinberg::int32>(outputChannelPtrs_.size());
@@ -553,21 +563,23 @@ Napi::Value PluginInstance::GetParameterInfo(const Napi::CallbackInfo& info) {
         throwNapiError(env, ErrorCode::InvalidParameter, "getParameterInfo(index) requires a number");
     }
     int32_t index = info[0].As<Napi::Number>().Int32Value();
-    Steinberg::Vst::ParameterInfo pi;
-    Steinberg::tresult r = controller_->getParameterInfo(index, pi);
-    if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
-        throwNst(ErrorCode::InvalidParameter, "getParameterInfo failed");
-    }
-    Napi::Object o = Napi::Object::New(env);
-    o.Set("id", Napi::Number::New(env, static_cast<double>(pi.id)));
-    o.Set("title", Napi::String::New(env, string128ToUtf8(pi.title)));
-    o.Set("shortTitle", Napi::String::New(env, string128ToUtf8(pi.shortTitle)));
-    o.Set("units", Napi::String::New(env, string128ToUtf8(pi.units)));
-    o.Set("stepCount", Napi::Number::New(env, pi.stepCount));
-    o.Set("defaultNormalizedValue", Napi::Number::New(env, pi.defaultNormalizedValue));
-    o.Set("unitId", Napi::Number::New(env, static_cast<double>(pi.unitId)));
-    o.Set("flags", Napi::Number::New(env, static_cast<double>(pi.flags)));
-    return o;
+    return translateExceptions(env, [&]() -> Napi::Value {
+        Steinberg::Vst::ParameterInfo pi;
+        Steinberg::tresult r = controller_->getParameterInfo(index, pi);
+        if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
+            throwNst(ErrorCode::InvalidParameter, "getParameterInfo failed");
+        }
+        Napi::Object o = Napi::Object::New(env);
+        o.Set("id", Napi::Number::New(env, static_cast<double>(pi.id)));
+        o.Set("title", Napi::String::New(env, string128ToUtf8(pi.title)));
+        o.Set("shortTitle", Napi::String::New(env, string128ToUtf8(pi.shortTitle)));
+        o.Set("units", Napi::String::New(env, string128ToUtf8(pi.units)));
+        o.Set("stepCount", Napi::Number::New(env, pi.stepCount));
+        o.Set("defaultNormalizedValue", Napi::Number::New(env, pi.defaultNormalizedValue));
+        o.Set("unitId", Napi::Number::New(env, static_cast<double>(pi.unitId)));
+        o.Set("flags", Napi::Number::New(env, static_cast<double>(pi.flags)));
+        return o;
+    });
 }
 
 Napi::Value PluginInstance::GetParameter(const Napi::CallbackInfo& info) {

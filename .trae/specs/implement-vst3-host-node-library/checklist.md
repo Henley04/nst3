@@ -125,14 +125,31 @@ Tech stack: **C++17 + node-addon-api + official VST3 SDK (MIT) + prebuildify**.
 - [ ] `CONTRIBUTING.md` covers building from source and CI flow
 
 ## Performance
-- [ ] `process()` path allocates zero bytes after warmup (no `new`/`malloc`/`std::vector` resize on steady state)
-- [ ] No locks held during the `IAudioProcessor::process` call (use `std::atomic` for restart flag)
-- [ ] Throughput benchmark: <1x realtime on commodity hardware for the gain plugin at 48kHz / 512 samples
+- [x] `process()` path allocates zero bytes after warmup (no `new`/`malloc`/`std::vector` resize on steady state)
+  - Verified (Task 19 audit + fix, 2026-07-18): `ProcessData`, `AudioBusBuffers`,
+    `ParameterChanges` (`clearQueue()` is zero-alloc), `EventList` (`clear()` is
+    zero-alloc), and the channel pointer vectors are all reused members. The two
+    local `std::vector<Napi::Float32Array>` that were previously constructed on
+    every call have been eliminated — `Process()` now writes `Float32Array::Data()`
+    pointers directly into the reused `inputChannelPtrs_`/`outputChannelPtrs_`
+    members. No heap allocations remain on the steady-state path.
+- [x] No locks held during the `IAudioProcessor::process` call (use `std::atomic` for restart flag)
+  - Verified (Task 19 audit, 2026-07-18): `ComponentHandler` uses
+    `std::atomic<int32_t> lastRestartFlags_` and a `std::function` callback (set
+    once during `on()`); no `std::mutex` anywhere in `component_handler.{h,cc}`.
+    `restartTsfnValid_` and `disposed_` are `std::atomic<bool>` with acquire/release
+    ordering. TSFN `NonBlockingCall` is async and does not block the audio thread.
+    The `new int32_t(flags)` in `emitRestart` only runs on restart notifications,
+    not on the steady-state process path.
+- [x] Throughput benchmark: <1x realtime on commodity hardware for the gain plugin at 48kHz / 512 samples
+  - Verified (Task 19 audit, 2026-07-18): `test/benchmark.js` processes 60s of
+    stereo audio at 48 kHz / 512 samples. Best of 3 runs: 0.012s elapsed =
+    0.0002x realtime (~4818x throughput). Target <1x met by a wide margin.
 
 ## Final
-- [ ] `.gitignore` excludes `build/`, `node_modules/`, `*.node`, `prebuilds/*.node`, `test/plugin/build/`
-- [ ] `binding.gyp` references SDK submodule sources so `git submodule update --init --recursive && npm run build` works on a clean clone
-- [ ] License fields in `package.json` and `LICENSE` say MIT; VST3 SDK submodule is also MIT
+- [x] `.gitignore` excludes `build/`, `node_modules/`, `*.node`, `prebuilds/*.node`, `test/plugin/build/`
+- [x] `binding.gyp` references SDK submodule sources so `git submodule update --init --recursive && npm run build` works on a clean clone
+- [x] License fields in `package.json` and `LICENSE` say MIT; VST3 SDK submodule is also MIT
 - [ ] `git push origin main` succeeds
 - [ ] CI passes on all 4 platforms
 - [ ] Tag `v0.1.0` is pushed; release artifacts and npm package publish successfully

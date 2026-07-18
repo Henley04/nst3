@@ -122,15 +122,15 @@ Tech stack: **C++17 + node-addon-api + official VST3 SDK (MIT) + prebuildify**.
   - [ ] SubTask 15.4: CI matrix builds the test plugin for each target platform and uploads as artifact; tests download the matching platform plugin before running
   - [ ] SubTask 15.5: Optionally also implement `TestSynth` — a MIDI-driven oscillator (1 sine voice) for MIDI event tests
 
-- [ ] Task 16: JavaScript integration tests
-  - [ ] SubTask 16.1: `test/discovery.test.js`: scan a fixtures dir with the test `.vst3`, verify `PluginInfo` fields
-  - [ ] SubTask 16.2: `test/load.test.js`: load + verify `getInfo()` (name, vendor, version, audio bus counts, parameter count)
-  - [ ] SubTask 16.3: `test/process.test.js`: activate → process silence (gain=0 → silence out; gain=1 → passthrough); verify Float32Array is filled and buffer is zero-copy (compare `Buffer.from(array.buffer).address` to native report if feasible)
-  - [ ] SubTask 16.4: `test/parameters.test.js`: `getParameterInfo(0)` returns expected fields; `setParameter`/`getParameter` round-trip; `formatParameter(0, 0.5)` returns non-empty
-  - [ ] SubTask 16.5: `test/midi.test.js`: if `TestSynth` is built, send noteOn/noteOff → output is non-silent; otherwise use the gain plugin and just verify `addMidiEvent` is accepted without error
-  - [ ] SubTask 16.6: `test/state.test.js`: save → mutate → load → verify params restored; also test loading the saved buffer into a fresh `PluginInstance`
-  - [ ] SubTask 16.7: `test/lifecycle.test.js`: dispose twice (no throw); load + dispose + load again (no leak/crash); verify GC finalizer does not crash
-  - [ ] SubTask 16.8: `test/errors.test.js`: nonexistent path → `VST3_LOAD_FAILED`; process before setActive → `VST3_NOT_ACTIVE`; process before setProcessing → `VST3_NOT_PROCESSING`; bad Float32Array length → `VST3_INVALID_BUFFER`
+- [x] Task 16: JavaScript integration tests
+  - [x] SubTask 16.1: `test/discovery.test.js`: scan a fixtures dir with the test `.vst3`, verify `PluginInfo` fields
+  - [x] SubTask 16.2: `test/load.test.js`: load + verify `getInfo()` (name, vendor, version, audio bus counts, parameter count)
+  - [x] SubTask 16.3: `test/process.test.js`: activate → process silence (gain=0 → silence out; gain=1 → passthrough); verify Float32Array is filled and buffer is zero-copy (compare `Buffer.from(array.buffer).address` to native report if feasible)
+  - [x] SubTask 16.4: `test/parameters.test.js`: `getParameterInfo(0)` returns expected fields; `setParameter`/`getParameter` round-trip; `formatParameter(0, 0.5)` returns non-empty
+  - [x] SubTask 16.5: `test/midi.test.js`: if `TestSynth` is built, send noteOn/noteOff → output is non-silent; otherwise use the gain plugin and just verify `addMidiEvent` is accepted without error
+  - [x] SubTask 16.6: `test/state.test.js`: save → mutate → load → verify params restored; also test loading the saved buffer into a fresh `PluginInstance`
+  - [x] SubTask 16.7: `test/lifecycle.test.js`: dispose twice (no throw); load + dispose + load again (no leak/crash); verify GC finalizer does not crash
+  - [x] SubTask 16.8: `test/errors.test.js`: nonexistent path → `VST3_LOAD_FAILED`; process before setActive → `VST3_NOT_ACTIVE`; process before setProcessing → `VST3_NOT_PROCESSING`; bad Float32Array length → `VST3_INVALID_BUFFER`
 
 - [x] Task 17: Examples
   - [x] SubTask 17.1: `examples/scan-plugins.js`: list installed plugins with metadata
@@ -146,15 +146,15 @@ Tech stack: **C++17 + node-addon-api + official VST3 SDK (MIT) + prebuildify**.
 
 ## Final Polish
 
-- [ ] Task 19: Performance and real-time safety audit
-  - [ ] SubTask 19.1: Audit `process()` path: no heap allocations after warmup (reuse `ProcessData`, `AudioBusBuffers`, `ParameterChangesContainer`, `EventListContainer`)
-  - [ ] SubTask 19.2: Verify no locks held during `IAudioProcessor::process` (use `std::atomic` flag for restart notifications instead of mutex)
-  - [ ] SubTask 19.3: Benchmark throughput on a 60s stereo file at 48kHz / 512 samples (target: <1x realtime on commodity hardware for the gain plugin)
+- [x] Task 19: Performance and real-time safety audit
+  - [x] SubTask 19.1: Audit `process()` path: no heap allocations after warmup (reuse `ProcessData`, `AudioBusBuffers`, `ParameterChangesContainer`, `EventListContainer`)
+  - [x] SubTask 19.2: Verify no locks held during `IAudioProcessor::process` (use `std::atomic` flag for restart notifications instead of mutex)
+  - [x] SubTask 19.3: Benchmark throughput on a 60s stereo file at 48kHz / 512 samples (target: <1x realtime on commodity hardware for the gain plugin)
 
 - [ ] Task 20: GitHub repository finalization
-  - [ ] SubTask 20.1: Add `.gitignore` (build/, node_modules/, *.node, prebuilds/*.node, test/plugin/build/)
-  - [ ] SubTask 20.2: Add `binding.gyp` includes for SDK submodule sources; verify `git submodule update --init --recursive && npm run build` works on a clean clone
-  - [ ] SubTask 20.3: Confirm MIT license fields in `package.json` and `LICENSE` covers both our code and the VST3 SDK submodule
+  - [x] SubTask 20.1: Add `.gitignore` (build/, node_modules/, *.node, prebuilds/*.node, test/plugin/build/)
+  - [x] SubTask 20.2: Add `binding.gyp` includes for SDK submodule sources; verify `git submodule update --init --recursive && npm run build` works on a clean clone
+  - [x] SubTask 20.3: Confirm MIT license fields in `package.json` and `LICENSE` covers both our code and the VST3 SDK submodule
   - [ ] SubTask 20.4: Verify `git push origin main` succeeds and CI passes on all 4 platforms
   - [ ] SubTask 20.5: Tag `v0.1.0` and confirm Release artifacts + npm package publish successfully
   - [ ] SubTask 20.6: Verify `npm install nst3` on a clean machine (no toolchain) loads the binary without compilation
