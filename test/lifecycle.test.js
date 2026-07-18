@@ -77,15 +77,20 @@ describe('Lifecycle and disposal', { skip: !ensurePluginBuilt() }, () => {
     () => {
       const host = createHost();
       {
-        using p = host.load(PLUGIN_PATH);
+        // `using p = host.load(...)` is TC39 explicit-resource-management syntax
+        // that not all supported Node runtimes parse (it fails at parse time,
+        // before the skip guard above can take effect). Calling the dispose
+        // symbol manually exercises the same code path as `using` would.
+        const p = host.load(PLUGIN_PATH);
         p.setActive(true);
         p.setProcessing(true);
         const inputs = makeTone(2, 4, 440, 48000, 0.5);
         const outputs = makeSilence(2, 4);
         p.process({ inputs, outputs, numSamples: 4 });
         assert.ok(Math.abs(outputs[0][0] - inputs[0][0]) < 1e-5);
-      } // p[Symbol.dispose]() called automatically here.
-      // Reaching this point without error demonstrates the using syntax works.
+        p[Symbol.dispose]();
+      } // p[Symbol.dispose]() called manually above (mirrors `using` semantics).
+      // Reaching this point without error demonstrates the dispose symbol works.
       assert.ok(true);
     }
   );
