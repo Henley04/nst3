@@ -95,6 +95,7 @@
               "MACOSX_DEPLOYMENT_TARGET": "10.13",
               "GCC_ENABLE_CPP_EXCEPTIONS": "YES",
               "GCC_ENABLE_CPP_RTTI": "YES",
+              "CLANG_ENABLE_OBJC_ARC": "YES",
               "OTHER_LDFLAGS": ["-framework", "Foundation", "-framework", "CoreFoundation"],
               "OTHER_CFLAGS": ["-fvisibility=hidden"]
             }
