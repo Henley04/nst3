@@ -1,0 +1,130 @@
+name: CI
+
+on:
+  push:
+    branches: [main, master]
+    tags: ['v*']
+  pull_request:
+    branches: [main, master]
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-test:
+    name: Build & Test (${{ matrix.artifact_name }})
+    runs-on: ${{ matrix.os }}
+    env:
+      # Backwards-compatible macOS binaries (binding.gyp also sets this in xcode_settings;
+      # the env var makes it visible to node-gyp during the install-script fallback build).
+      MACOSX_DEPLOYMENT_TARGET: '10.13'
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            arch: x64
+            artifact_name: prebuilds-win32-x64
+          - os: macos-13
+            arch: x64
+            artifact_name: prebuilds-darwin-x64
+          - os: macos-14
+            arch: arm64
+            artifact_name: prebuilds-darwin-arm64
+          - os: ubuntu-latest
+            arch: x64
+            artifact_name: prebuilds-linux-x64
+
+    steps:
+      - name: Checkout (with VST3 SDK submodule)
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Setup Python 3 (for node-gyp)
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake build-essential libasound2-dev libstdc++-13-dev
+
+      - name: Install npm dependencies
+        run: npm ci
+
+      - name: Build native addon from source
+        run: npm run build
+
+      - name: Verify addon loads
+        run: node -e "const v = require('./').version(); console.log(JSON.stringify(v)); if(!v.native) process.exit(1)"
+
+      - name: Build test plugin (Gain.vst3)
+        run: npm run test:plugin
+
+      - name: Run integration tests
+        run: npm test
+
+      - name: Create prebuilds
+        run: npx prebuildify --napi-version 8 --tag-armv -t 20.0.0
+
+      - name: Upload prebuilds artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact_name }}
+          path: prebuilds/
+          if-no-files-found: error
+
+  release:
+    name: Release to npm & GitHub
+    needs: build-and-test
+    if: startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Download all prebuild artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: prebuilds
+          merge-multiple: true
+
+      - name: Verify all 4 platform prebuilds are present
+        run: |
+          echo "Prebuilds contents:"
+          find prebuilds -type f | sort
+          echo
+          count=$(find prebuilds -type f -name '*.node' | wc -l)
+          echo "Found $count .node file(s) (expected >= 4)"
+          if [ "$count" -lt 4 ]; then
+            echo "ERROR: Expected at least 4 prebuild .node files, found $count"
+            exit 1
+          fi
+
+      - name: Publish to npm
+        run: npm publish
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Create prebuilds tarball
+        run: tar -czf nst3-prebuilds-${{ github.ref_name }}.tar.gz prebuilds/
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: nst3-prebuilds-${{ github.ref_name }}.tar.gz
