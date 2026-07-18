@@ -138,15 +138,25 @@ export interface PluginInstanceInfo {
 export interface ProcessBlock {
     /**
      * Per-channel input audio buffers. Each Float32Array must have at
-     * least `numSamples` elements. Length of the array determines the
-     * number of input channels actually wired to the plugin.
+     * least `numSamples` elements. Two shapes are accepted:
+     *
+     *  - Single-bus (backward compat): a flat array of channel Float32Arrays.
+     *    These channels are routed to bus 0 of the plugin. This is the
+     *    typical shape for stereo effects.
+     *
+     *  - Multi-bus: an array of buses, where each bus is itself an array of
+     *    channel Float32Arrays. Use this for plugins with sidechain inputs
+     *    (e.g. compressor with kAux input) or multi-output instruments.
+     *    Example: `[[mainL, mainR], [sidechainL, sidechainR]]`.
+     *
+     * If undefined / null, all input buses are treated as silent.
      */
-    inputs: Float32Array[];
+    inputs?: Float32Array[] | Float32Array[][];
     /**
-     * Per-channel output audio buffers. Will be filled by the plugin.
-     * Same length / element-length rules as `inputs`.
+     * Per-channel output audio buffers. Same shape rules as `inputs`.
+     * Will be filled by the plugin in place (zero-copy).
      */
-    outputs: Float32Array[];
+    outputs?: Float32Array[] | Float32Array[][];
     /** Number of samples to process this block. Must be > 0 and <= hostOptions.maxBlockSize. */
     numSamples: number;
 }

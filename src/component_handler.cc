@@ -24,11 +24,11 @@ Steinberg::tresult PLUGIN_API ComponentHandler::performEdit(
     Steinberg::Vst::ParamID id, Steinberg::Vst::ParamValue valueNormalized) {
     // performEdit is called when the controller wants the host to record a
     // parameter automation point. We forward it to the PluginInstance so it
-    // can add a point to the input parameter change queue for the next process.
-    (void)id; (void)valueNormalized;
-    // PluginInstance handles its own queueing in setParameter; we don't need
-    // to do anything additional here for performEdit (the controller has
-    // already applied the value via setParamNormalized before calling us).
+    // can update the controller value and add a point to the input parameter
+    // change queue for the next process call (per VST3 spec).
+    if (performEditSink_) {
+        performEditSink_->onPerformEdit(id, valueNormalized);
+    }
     return Steinberg::kResultTrue;
 }
 

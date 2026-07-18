@@ -6,6 +6,7 @@
 
 #include <cstring>
 #include <algorithm>
+#include <cmath>
 #include <sstream>
 
 #include "errors.h"
@@ -17,6 +18,8 @@
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
+#include "pluginterfaces/vst/ivstmidicontrollers.h"
+#include "pluginterfaces/vst/vstspeaker.h"
 #include "pluginterfaces/vst/ivstevents.h"
 #include "pluginterfaces/vst/ivstparameterchanges.h"
 #include "pluginterfaces/vst/ivstmessage.h"
@@ -210,37 +213,75 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
     // Setup ComponentHandler (so plugin's controller can call back into the host)
     handler_ = std::make_unique<ComponentHandler>();
     handler_->setPluginInstance(this);
+    handler_->setPerformEditSink(this);  // route performEdit → inputParams_
     if (controller_) {
         controller_->setComponentHandler(handler_.get());
         hostApp_->setComponentHandler(handler_.get());
         info_.hasController = true;
+        // Query optional IMidiMapping for proper MIDI CC/PB/PC routing.
+        midiMapping_ = Steinberg::U::cast<Steinberg::Vst::IMidiMapping>(controller_);
     }
 
-    // Read bus info
-    Steinberg::int32 inAudio = 0, outAudio = 0, inMidi = 0, outMidi = 0;
-    Steinberg::Vst::BusInfo busInfo;
-    for (Steinberg::int32 i = 0; i < component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput); ++i) {
-        if (component_->getBusInfo(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, i, busInfo) == Steinberg::kResultTrue) {
-            inAudio += busInfo.channelCount;
-        }
-    }
-    for (Steinberg::int32 i = 0; i < component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput); ++i) {
-        if (component_->getBusInfo(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput, i, busInfo) == Steinberg::kResultTrue) {
-            outAudio += busInfo.channelCount;
-        }
-    }
-    inMidi = component_->getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kInput);
-    outMidi = component_->getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kOutput);
+    // Read per-bus audio info (per-bus, not just summed channel counts).
+    // We capture this once at load time; later speaker-arrangement
+    // negotiation may rewrite `arrangement` after setBusArrangements.
+    Steinberg::int32 inAudioBuses =
+        component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput);
+    Steinberg::int32 outAudioBuses =
+        component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput);
 
-    // Activate default audio buses (first input, first output)
-    if (component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kInput) > 0) {
-        component_->activateBus(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, 0, true);
+    inputBusInfos_.clear();
+    inputBusInfos_.reserve(static_cast<size_t>(inAudioBuses));
+    for (Steinberg::int32 i = 0; i < inAudioBuses; ++i) {
+        AudioBusInfoEntry e;
+        Steinberg::Vst::BusInfo busInfo;
+        if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                    Steinberg::Vst::kInput, i, busInfo)
+            == Steinberg::kResultTrue) {
+            e.channelCount = busInfo.channelCount;
+            e.isActive = (busInfo.flags & Steinberg::Vst::BusInfo::kDefaultActive) != 0;
+        }
+        inputBusInfos_.push_back(e);
     }
-    if (component_->getBusCount(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput) > 0) {
-        component_->activateBus(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput, 0, true);
+    outputBusInfos_.clear();
+    outputBusInfos_.reserve(static_cast<size_t>(outAudioBuses));
+    for (Steinberg::int32 i = 0; i < outAudioBuses; ++i) {
+        AudioBusInfoEntry e;
+        Steinberg::Vst::BusInfo busInfo;
+        if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                    Steinberg::Vst::kOutput, i, busInfo)
+            == Steinberg::kResultTrue) {
+            e.channelCount = busInfo.channelCount;
+            e.isActive = (busInfo.flags & Steinberg::Vst::BusInfo::kDefaultActive) != 0;
+        }
+        outputBusInfos_.push_back(e);
+    }
+
+    // MIDI (event) bus counts
+    Steinberg::int32 inMidi =
+        component_->getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kInput);
+    Steinberg::int32 outMidi =
+        component_->getBusCount(Steinberg::Vst::kEvent, Steinberg::Vst::kOutput);
+
+    // Activate all default-active audio buses (and at minimum the first
+    // input/output so single-bus plugins work even if they omit the flag).
+    for (Steinberg::int32 i = 0; i < inAudioBuses; ++i) {
+        bool on = inputBusInfos_[static_cast<size_t>(i)].isActive || (i == 0);
+        component_->activateBus(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, i, on);
+        inputBusInfos_[static_cast<size_t>(i)].isActive = on;
+    }
+    for (Steinberg::int32 i = 0; i < outAudioBuses; ++i) {
+        bool on = outputBusInfos_[static_cast<size_t>(i)].isActive || (i == 0);
+        component_->activateBus(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput, i, on);
+        outputBusInfos_[static_cast<size_t>(i)].isActive = on;
     }
     if (inMidi > 0) component_->activateBus(Steinberg::Vst::kEvent, Steinberg::Vst::kInput, 0, true);
     if (outMidi > 0) component_->activateBus(Steinberg::Vst::kEvent, Steinberg::Vst::kOutput, 0, true);
+
+    // Negotiate speaker arrangements: try stereo for all buses, fall back to
+    // the plugin's current arrangement. Must run before the first
+    // getBusInfo() / process() so the plugin sees consistent state.
+    negotiateSpeakerArrangements();
 
     // Setup ProcessData struct (reused across calls)
     std::memset(&processData_, 0, sizeof(processData_));
@@ -251,12 +292,50 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
     processData_.outputParameterChanges = &outputParams_;
     processData_.outputEvents = &outputEvents_;
 
-    std::memset(&inputBuffers_, 0, sizeof(inputBuffers_));
-    std::memset(&outputBuffers_, 0, sizeof(outputBuffers_));
+    // Allocate per-bus AudioBusBuffers and per-bus channel pointer vectors.
+    // Sizes match the declared bus counts; this is zero-alloc on the
+    // steady-state process() path because we reuse these members.
+    inputBuffers_.assign(static_cast<size_t>(inAudioBuses), Steinberg::Vst::AudioBusBuffers{});
+    outputBuffers_.assign(static_cast<size_t>(outAudioBuses), Steinberg::Vst::AudioBusBuffers{});
+    inputChannelPtrsPerBus_.assign(static_cast<size_t>(inAudioBuses), {});
+    outputChannelPtrsPerBus_.assign(static_cast<size_t>(outAudioBuses), {});
+    for (Steinberg::int32 i = 0; i < inAudioBuses; ++i) {
+        auto& bufs = inputChannelPtrsPerBus_[static_cast<size_t>(i)];
+        bufs.assign(static_cast<size_t>(inputBusInfos_[static_cast<size_t>(i)].channelCount), nullptr);
+        inputBuffers_[static_cast<size_t>(i)].numChannels = inputBusInfos_[static_cast<size_t>(i)].channelCount;
+        inputBuffers_[static_cast<size_t>(i)].silenceFlags = 0;
+        inputBuffers_[static_cast<size_t>(i)].channelBuffers32 = bufs.data();
+    }
+    for (Steinberg::int32 i = 0; i < outAudioBuses; ++i) {
+        auto& bufs = outputChannelPtrsPerBus_[static_cast<size_t>(i)];
+        bufs.assign(static_cast<size_t>(outputBusInfos_[static_cast<size_t>(i)].channelCount), nullptr);
+        outputBuffers_[static_cast<size_t>(i)].numChannels = outputBusInfos_[static_cast<size_t>(i)].channelCount;
+        outputBuffers_[static_cast<size_t>(i)].silenceFlags = 0;
+        outputBuffers_[static_cast<size_t>(i)].channelBuffers32 = bufs.data();
+    }
+    processData_.numInputs = inAudioBuses;
+    processData_.numOutputs = outAudioBuses;
+    processData_.inputs = inputBuffers_.data();
+    processData_.outputs = outputBuffers_.data();
 
-    // Size channel pointer vectors to bus counts (allocate once)
-    inputChannelPtrs_.assign(static_cast<size_t>(std::max<int32_t>(inAudio, opts.audioInputs)), nullptr);
-    outputChannelPtrs_.assign(static_cast<size_t>(std::max<int32_t>(outAudio, opts.audioOutputs)), nullptr);
+    // Initialize ProcessContext with sensible defaults. Plugins query this
+    // every process() call to align LFOs/sequences to tempo & transport.
+    std::memset(&processContext_, 0, sizeof(processContext_));
+    processContext_.sampleRate = opts_.sampleRate;
+    processContext_.projectTimeSamples = 0;
+    processContext_.tempo = 120.0;
+    processContext_.timeSigNumerator = 4;
+    processContext_.timeSigDenominator = 4;
+    processContext_.state =
+        Steinberg::Vst::ProcessContext::kPlaying |
+        Steinberg::Vst::ProcessContext::kTempoValid |
+        Steinberg::Vst::ProcessContext::kTimeSigValid |
+        Steinberg::Vst::ProcessContext::kProjectTimeMusicValid |
+        Steinberg::Vst::ProcessContext::kBarPositionValid;
+    processContext_.projectTimeMusic = 0.0;
+    processContext_.barPositionMusic = 0.0;
+    processContext_.samplesToNextClock = 0;
+    processData_.processContext = &processContext_;
 
     // Populate info struct
     info_.name = chosen.name();
@@ -277,6 +356,11 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
         }
         info_.classId = s;
     }
+    // Sum total audio channels across all buses (kept for backward compat
+    // with the JS-visible PluginInstanceInfo.numAudioInputs/Outputs fields).
+    Steinberg::int32 inAudio = 0, outAudio = 0;
+    for (const auto& b : inputBusInfos_) inAudio += b.channelCount;
+    for (const auto& b : outputBusInfos_) outAudio += b.channelCount;
     info_.numAudioInputs = inAudio;
     info_.numAudioOutputs = outAudio;
     info_.numMidiInputs = inMidi;
@@ -284,6 +368,93 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
     info_.parameterCount = controller_ ? controller_->getParameterCount() : 0;
 
     return true;
+}
+
+// Negotiate speaker arrangements per the VST3 spec:
+//   1. Query each bus's current arrangement via getBusArrangement.
+//   2. Try to set all input/output buses to stereo (kStereo).
+//   3. If that fails, fall back to mono (kMono).
+//   4. If that fails too, keep the plugin's reported arrangement as-is.
+// We never block load on a failed negotiation — the plugin's defaults remain.
+void PluginInstance::negotiateSpeakerArrangements() {
+    if (!audioProcessor_ || inputBusInfos_.empty() || outputBusInfos_.empty()) return;
+
+    auto readCurrent = [&](Steinberg::Vst::BusDirection dir,
+                            std::vector<AudioBusInfoEntry>& infos) {
+        for (size_t i = 0; i < infos.size(); ++i) {
+            Steinberg::Vst::SpeakerArrangement arr = 0;
+            if (audioProcessor_->getBusArrangement(dir, static_cast<Steinberg::int32>(i), arr)
+                == Steinberg::kResultTrue) {
+                infos[i].arrangement = arr;
+            }
+        }
+    };
+    readCurrent(Steinberg::Vst::kInput, inputBusInfos_);
+    readCurrent(Steinberg::Vst::kOutput, outputBusInfos_);
+
+    // Try stereo first (the common case for music plugins).
+    std::vector<Steinberg::Vst::SpeakerArrangement> inArr(inputBusInfos_.size(),
+                                                            Steinberg::Vst::SpeakerArr::kStereo);
+    std::vector<Steinberg::Vst::SpeakerArrangement> outArr(outputBusInfos_.size(),
+                                                             Steinberg::Vst::SpeakerArr::kStereo);
+    Steinberg::tresult r = audioProcessor_->setBusArrangements(
+        inArr.data(), static_cast<Steinberg::int32>(inArr.size()),
+        outArr.data(), static_cast<Steinberg::int32>(outArr.size()));
+    if (r == Steinberg::kResultTrue) {
+        for (auto& b : inputBusInfos_) b.arrangement = Steinberg::Vst::SpeakerArr::kStereo;
+        for (auto& b : outputBusInfos_) b.arrangement = Steinberg::Vst::SpeakerArr::kStereo;
+        // Re-read channel counts (a plugin may have switched bus layouts).
+        for (size_t i = 0; i < inputBusInfos_.size(); ++i) {
+            Steinberg::Vst::BusInfo busInfo;
+            if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                        Steinberg::Vst::kInput,
+                                        static_cast<Steinberg::int32>(i), busInfo)
+                == Steinberg::kResultTrue) {
+                inputBusInfos_[i].channelCount = busInfo.channelCount;
+            }
+        }
+        for (size_t i = 0; i < outputBusInfos_.size(); ++i) {
+            Steinberg::Vst::BusInfo busInfo;
+            if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                        Steinberg::Vst::kOutput,
+                                        static_cast<Steinberg::int32>(i), busInfo)
+                == Steinberg::kResultTrue) {
+                outputBusInfos_[i].channelCount = busInfo.channelCount;
+            }
+        }
+        return;
+    }
+
+    // Try mono fallback (single-channel plugins).
+    std::fill(inArr.begin(), inArr.end(), Steinberg::Vst::SpeakerArr::kMono);
+    std::fill(outArr.begin(), outArr.end(), Steinberg::Vst::SpeakerArr::kMono);
+    r = audioProcessor_->setBusArrangements(
+        inArr.data(), static_cast<Steinberg::int32>(inArr.size()),
+        outArr.data(), static_cast<Steinberg::int32>(outArr.size()));
+    if (r == Steinberg::kResultTrue) {
+        for (auto& b : inputBusInfos_) b.arrangement = Steinberg::Vst::SpeakerArr::kMono;
+        for (auto& b : outputBusInfos_) b.arrangement = Steinberg::Vst::SpeakerArr::kMono;
+        for (size_t i = 0; i < inputBusInfos_.size(); ++i) {
+            Steinberg::Vst::BusInfo busInfo;
+            if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                        Steinberg::Vst::kInput,
+                                        static_cast<Steinberg::int32>(i), busInfo)
+                == Steinberg::kResultTrue) {
+                inputBusInfos_[i].channelCount = busInfo.channelCount;
+            }
+        }
+        for (size_t i = 0; i < outputBusInfos_.size(); ++i) {
+            Steinberg::Vst::BusInfo busInfo;
+            if (component_->getBusInfo(Steinberg::Vst::kAudio,
+                                        Steinberg::Vst::kOutput,
+                                        static_cast<Steinberg::int32>(i), busInfo)
+                == Steinberg::kResultTrue) {
+                outputBusInfos_[i].channelCount = busInfo.channelCount;
+            }
+        }
+        return;
+    }
+    // Otherwise leave the plugin's defaults in place.
 }
 
 void PluginInstance::teardown() {
@@ -336,6 +507,49 @@ void PluginInstance::emitRestart(int32_t flags) {
         cb.Call({Napi::Number::New(env, *data)});
         delete data;
     });
+}
+
+// IPerformEditSink: controller-driven parameter automation point.
+// Called by ComponentHandler::performEdit (typically when a plugin's GUI
+// turns a knob, or when an automated synth internally drives a parameter).
+// We update the controller's normalized value and queue a point at sample
+// offset 0 for the next process() call, matching the spec for performEdit.
+void PluginInstance::onPerformEdit(Steinberg::Vst::ParamID id,
+                                    Steinberg::Vst::ParamValue valueNormalized) {
+    if (!controller_) return;
+    controller_->setParamNormalized(id, valueNormalized);
+    Steinberg::int32 idx = 0;
+    auto* queue = inputParams_.addParameterData(id, idx);
+    if (queue) {
+        Steinberg::int32 ptIdx = 0;
+        queue->addPoint(0, valueNormalized, ptIdx);
+    }
+}
+
+// Try to map a MIDI controller (CC/PB/PC/CP) to a plugin parameter via the
+// optional IMidiMapping interface. On success, sets the parameter on the
+// controller and queues the change for the next process() call. On failure
+// (no IMidiMapping, or plugin doesn't map this controller) returns false —
+// caller should fall back to a kLegacyMIDICCOutEvent.
+bool PluginInstance::tryMapMidiController(int16_t channel,
+                                          Steinberg::Vst::CtrlNumber ctrlNumber,
+                                          double normalizedValue,
+                                          Steinberg::Vst::ParamID* outParamId) {
+    if (!midiMapping_ || !controller_) return false;
+    Steinberg::Vst::ParamID id = Steinberg::Vst::kNoParamId;
+    Steinberg::tresult r = midiMapping_->getMidiControllerAssignment(
+        /*busIndex*/ 0, channel, ctrlNumber, id);
+    if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) return false;
+    if (id == Steinberg::Vst::kNoParamId) return false;
+    controller_->setParamNormalized(id, normalizedValue);
+    Steinberg::int32 idx = 0;
+    auto* queue = inputParams_.addParameterData(id, idx);
+    if (queue) {
+        Steinberg::int32 ptIdx = 0;
+        queue->addPoint(0, normalizedValue, ptIdx);
+    }
+    if (outParamId) *outParamId = id;
+    return true;
 }
 
 //------------------------------------------------------------------------
@@ -457,76 +671,88 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
                        "block.numSamples must be in (0, " + std::to_string(opts_.maxBlockSize) + "]");
     }
 
-    // Collect input Float32Array channel pointers directly into the reused
-    // member vector (zero-copy, zero-alloc on the steady-state path).
-    size_t inCount = 0;
-    if (block.Has("inputs") && block.Get("inputs").IsArray()) {
-        Napi::Array arr = block.Get("inputs").As<Napi::Array>();
-        for (uint32_t i = 0; i < arr.Length(); ++i) {
-            Napi::Value v = arr[i];
-            if (!v.IsTypedArray() || v.As<Napi::TypedArray>().TypedArrayType() != napi_float32_array) {
-                throwNapiError(env, ErrorCode::InvalidBuffer, "inputs must be Float32Array[]");
-            }
-            Napi::Float32Array fa = v.As<Napi::Float32Array>();
-            if (static_cast<int32_t>(fa.ElementLength()) < numSamples) {
-                throwNapiError(env, ErrorCode::InvalidBuffer, "inputs buffer length < numSamples");
-            }
-            if (inCount < inputChannelPtrs_.size()) {
-                inputChannelPtrs_[inCount] = fa.Data();
-            }
-            ++inCount;
+    // Resolve input/output buses from the JS `inputs`/`outputs` values.
+    // Supported shapes (per direction):
+    //   - undefined / null: all buses silent
+    //   - Float32Array[ch0, ch1, ...]: single-bus (backward compat)
+    //   - Array[Float32Array, Float32Array, ...]: single-bus, explicit channels
+    //   - Array[Array[Float32Array,...], Array[Float32Array,...]]: multi-bus
+    if (block.Has("inputs")) {
+        if (!resolveAudioBuses(env, block.Get("inputs"), inputBusInfos_,
+                                inputChannelPtrsPerBus_, numSamples, "inputs")) {
+            return env.Undefined();
         }
+    } else {
+        for (auto& v : inputChannelPtrsPerBus_) std::fill(v.begin(), v.end(), nullptr);
     }
-    if (inCount > inputChannelPtrs_.size()) {
-        throwNapiError(env, ErrorCode::InvalidBuffer,
-                       "inputs channel count exceeds allocated input buses");
-    }
-
-    size_t outCount = 0;
-    if (block.Has("outputs") && block.Get("outputs").IsArray()) {
-        Napi::Array arr = block.Get("outputs").As<Napi::Array>();
-        for (uint32_t i = 0; i < arr.Length(); ++i) {
-            Napi::Value v = arr[i];
-            if (!v.IsTypedArray() || v.As<Napi::TypedArray>().TypedArrayType() != napi_float32_array) {
-                throwNapiError(env, ErrorCode::InvalidBuffer, "outputs must be Float32Array[]");
-            }
-            Napi::Float32Array fa = v.As<Napi::Float32Array>();
-            if (static_cast<int32_t>(fa.ElementLength()) < numSamples) {
-                throwNapiError(env, ErrorCode::InvalidBuffer, "outputs buffer length < numSamples");
-            }
-            if (outCount < outputChannelPtrs_.size()) {
-                outputChannelPtrs_[outCount] = fa.Data();
-            }
-            ++outCount;
+    if (block.Has("outputs")) {
+        if (!resolveAudioBuses(env, block.Get("outputs"), outputBusInfos_,
+                                outputChannelPtrsPerBus_, numSamples, "outputs")) {
+            return env.Undefined();
         }
-    }
-    if (outCount > outputChannelPtrs_.size()) {
-        throwNapiError(env, ErrorCode::InvalidBuffer,
-                       "outputs channel count exceeds allocated output buses");
+    } else {
+        for (auto& v : outputChannelPtrsPerBus_) std::fill(v.begin(), v.end(), nullptr);
     }
 
     return translateExceptions(env, [&]() -> Napi::Value {
-        inputBuffers_.numChannels = static_cast<Steinberg::int32>(inputChannelPtrs_.size());
-        inputBuffers_.channelBuffers32 = inputChannelPtrs_.data();
-        outputBuffers_.numChannels = static_cast<Steinberg::int32>(outputChannelPtrs_.size());
-        outputBuffers_.channelBuffers32 = outputChannelPtrs_.data();
+        // Wire per-bus AudioBusBuffers to the freshly resolved channel ptrs.
+        for (size_t i = 0; i < inputBuffers_.size(); ++i) {
+            inputBuffers_[i].numChannels =
+                static_cast<Steinberg::int32>(inputChannelPtrsPerBus_[i].size());
+            inputBuffers_[i].channelBuffers32 = inputChannelPtrsPerBus_[i].data();
+            // silenceFlags = 0 means "not silent"; the host promises nothing
+            // here, the plugin must read input as-is.
+            inputBuffers_[i].silenceFlags = 0;
+        }
+        for (size_t i = 0; i < outputBuffers_.size(); ++i) {
+            outputBuffers_[i].numChannels =
+                static_cast<Steinberg::int32>(outputChannelPtrsPerBus_[i].size());
+            outputBuffers_[i].channelBuffers32 = outputChannelPtrsPerBus_[i].data();
+            outputBuffers_[i].silenceFlags = 0;
+        }
 
         processData_.numSamples = numSamples;
-        processData_.numInputs = 1;
-        processData_.numOutputs = 1;
-        processData_.inputs = &inputBuffers_;
-        processData_.outputs = &outputBuffers_;
+        // numInputs / numOutputs / inputs / outputs already wired in setup().
 
         // Reset output containers (clear stale state from prior process)
         outputParams_.clearQueue();
         outputEvents_.clear();
 
-        // Snapshot process context (transport) — currently off / not playing
-        Steinberg::Vst::ProcessContext ctx;
-        std::memset(&ctx, 0, sizeof(ctx));
-        ctx.sampleRate = opts_.sampleRate;
-        ctx.state = 0; // stopped
-        processData_.processContext = &ctx;
+        // Advance the persistent ProcessContext: project time in samples
+        // advances by numSamples each block. projectTimeMusic advances by
+        // (numSamples * tempo) / (60 * sampleRate) quarter notes per block.
+        processContext_.projectTimeSamples += numSamples;
+        if (processContext_.state & Steinberg::Vst::ProcessContext::kTempoValid) {
+            double quartersPerSample =
+                processContext_.tempo / (60.0 * opts_.sampleRate);
+            processContext_.projectTimeMusic +=
+                static_cast<double>(numSamples) * quartersPerSample;
+            // Bar position is the last bar boundary; recompute from quarter
+            // position using the (4/4) signature: one bar = 4 quarter notes
+            // in 4/4. For non-4/4 this is approximate but still useful.
+            double quartersPerBar = static_cast<double>(
+                processContext_.timeSigNumerator * 4) /
+                static_cast<double>(
+                    processContext_.timeSigDenominator > 0
+                        ? processContext_.timeSigDenominator : 4);
+            double bars =
+                std::floor(processContext_.projectTimeMusic / quartersPerBar);
+            processContext_.barPositionMusic = bars * quartersPerBar;
+        }
+        // samplesToNextClock: 24 PPQ per quarter note. Compute the distance
+        // from the current sample position to the next MIDI clock tick.
+        if (processContext_.state & Steinberg::Vst::ProcessContext::kTempoValid) {
+            double samplesPerQuarter =
+                (60.0 * opts_.sampleRate) / processContext_.tempo;
+            double samplesPerClock = samplesPerQuarter / 24.0;
+            double frac = std::fmod(static_cast<double>(processContext_.projectTimeSamples),
+                                     samplesPerClock);
+            processContext_.samplesToNextClock =
+                static_cast<int32_t>(samplesPerClock - frac);
+            if (processContext_.samplesToNextClock < 0)
+                processContext_.samplesToNextClock = 0;
+        }
+        processData_.processContext = &processContext_;
 
         Steinberg::tresult r = audioProcessor_->process(processData_);
         if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
@@ -544,6 +770,83 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
 
         return env.Undefined();
     });
+}
+
+// Resolve JS `inputs`/`outputs` value to per-bus channel pointer vectors.
+// Returns false (and throws) on shape/length errors.
+bool PluginInstance::resolveAudioBuses(
+    Napi::Env env, Napi::Value value,
+    const std::vector<AudioBusInfoEntry>& busInfos,
+    std::vector<std::vector<float*>>& outPtrs,
+    int32_t numSamples, const char* dirName) {
+    // Reset all channel pointers to nullptr (silence).
+    for (auto& v : outPtrs) std::fill(v.begin(), v.end(), nullptr);
+
+    if (value.IsNull() || value.IsUndefined()) return true;
+    if (!value.IsArray()) {
+        throwNapiError(env, ErrorCode::InvalidBuffer,
+                       std::string(dirName) + " must be a Float32Array[] or Float32Array[][]");
+        return false;
+    }
+    Napi::Array arr = value.As<Napi::Array>();
+
+    // Helper: extract a Float32Array channel with length check.
+    auto extractChannel = [&](Napi::Value v, float*& out) -> bool {
+        if (!v.IsTypedArray() ||
+            v.As<Napi::TypedArray>().TypedArrayType() != napi_float32_array) {
+            throwNapiError(env, ErrorCode::InvalidBuffer,
+                           std::string(dirName) + " entries must be Float32Array");
+            return false;
+        }
+        Napi::Float32Array fa = v.As<Napi::Float32Array>();
+        if (static_cast<int32_t>(fa.ElementLength()) < numSamples) {
+            throwNapiError(env, ErrorCode::InvalidBuffer,
+                           std::string(dirName) + " buffer length < numSamples");
+            return false;
+        }
+        out = fa.Data();
+        return true;
+    };
+
+    // Detect multi-bus form: an array whose first element is itself an array
+    // of Float32Arrays. Single-bus form: a flat array of Float32Arrays.
+    bool multiBus = false;
+    if (arr.Length() > 0) {
+        Napi::Value first = arr[(uint32_t)0];
+        if (first.IsArray()) multiBus = true;
+    }
+
+    if (!multiBus) {
+        // Flat channel list, applied to bus 0 only. If bus 0 doesn't exist,
+        // we silently ignore — the plugin has no audio inputs/outputs.
+        if (busInfos.empty()) return true;
+        auto& bus0 = outPtrs[0];
+        for (uint32_t i = 0; i < arr.Length() && i < bus0.size(); ++i) {
+            if (!extractChannel(arr[i], bus0[i])) return false;
+        }
+        return true;
+    }
+
+    // Multi-bus form: each outer element is an array of channels for that bus.
+    if (arr.Length() > busInfos.size()) {
+        throwNapiError(env, ErrorCode::InvalidBuffer,
+                       std::string(dirName) + ": more buses supplied than declared");
+        return false;
+    }
+    for (uint32_t b = 0; b < arr.Length(); ++b) {
+        Napi::Value busVal = arr[b];
+        if (!busVal.IsArray()) {
+            throwNapiError(env, ErrorCode::InvalidBuffer,
+                           std::string(dirName) + "[" + std::to_string(b) + "] must be an array");
+            return false;
+        }
+        Napi::Array busArr = busVal.As<Napi::Array>();
+        auto& busPtrs = outPtrs[b];
+        for (uint32_t c = 0; c < busArr.Length() && c < busPtrs.size(); ++c) {
+            if (!extractChannel(busArr[c], busPtrs[c])) return false;
+        }
+    }
+    return true;
 }
 
 //------------------------------------------------------------------------
@@ -695,6 +998,34 @@ Napi::Value PluginInstance::AddMidiEvent(const Napi::CallbackInfo& info) {
             sysexData = sysexHeld_.back().data();
         }
 
+        // For CC / Program Change / Channel Pressure / Pitch Bend, prefer the
+        // IMidiMapping interface (VST3-spec compliant): map the controller to
+        // a parameter and queue a parameter change for the next process().
+        // If the plugin doesn't implement IMidiMapping (or doesn't map this
+        // specific controller), fall back to the kLegacyMIDICCOutEvent path
+        // below by letting structuredMidiToEvent handle it.
+        auto t = static_cast<MidiEventType>(type);
+        int16_t ch = static_cast<int16_t>(channel & 0x0F);
+        if (t == MidiEventType::Controller) {
+            auto ctrl = static_cast<Steinberg::Vst::CtrlNumber>(cc & 0x7F);
+            double norm = static_cast<double>(ccVal & 0x7F) / 127.0;
+            if (tryMapMidiController(ch, ctrl, norm)) return env.Undefined();
+        } else if (t == MidiEventType::ProgramChange) {
+            double norm = static_cast<double>(prog & 0x7F) / 127.0;
+            if (tryMapMidiController(ch, Steinberg::Vst::kCtrlProgramChange, norm))
+                return env.Undefined();
+        } else if (t == MidiEventType::ChannelPressure) {
+            double norm = static_cast<double>(pressure & 0x7F) / 127.0;
+            if (tryMapMidiController(ch, Steinberg::Vst::kAfterTouch, norm))
+                return env.Undefined();
+        } else if (t == MidiEventType::PitchBend) {
+            // pitchBend is signed [-8192, 8191]; normalize to [0, 1].
+            int32_t pb14 = (pb + 8192) & 0x3FFF;
+            double norm = static_cast<double>(pb14) / 16383.0;
+            if (tryMapMidiController(ch, Steinberg::Vst::kPitchBend, norm))
+                return env.Undefined();
+        }
+
         Steinberg::Vst::Event e;
         if (!structuredMidiToEvent(type, channel, note, velocity, cc, ccVal, prog,
                                    pressure, pb, sysexData, sysexSize, sampleOffset, e)) {
@@ -727,13 +1058,36 @@ Napi::Value PluginInstance::AddMidiBytes(const Napi::CallbackInfo& info) {
             }
             // The Event points to our held buffer; safe until next process()
             inputEvents_.addEvent(e);
-        } else {
-            Steinberg::Vst::Event e;
-            if (!midiBytesToEvent(arr.Data(), arr.ElementLength(), sampleOffset, e)) {
-                throwNst(ErrorCode::MidiError, "Failed to parse MIDI bytes");
-            }
-            inputEvents_.addEvent(e);
+            return env.Undefined();
         }
+
+        // Parse the bytes first to know which controller type this is.
+        Steinberg::Vst::Event e;
+        if (!midiBytesToEvent(arr.Data(), arr.ElementLength(), sampleOffset, e)) {
+            throwNst(ErrorCode::MidiError, "Failed to parse MIDI bytes");
+        }
+
+        // If the parsed event is a legacy MIDI CC event, try IMidiMapping
+        // first. The mapping is preferred per the VST3 spec for plugins that
+        // declare CC/PB/PC/CP as parameters.
+        if (e.type == Steinberg::Vst::Event::kLegacyMIDICCOutEvent) {
+            int16_t ch = static_cast<int16_t>(e.midiCCOut.channel);
+            auto ctrl = static_cast<Steinberg::Vst::CtrlNumber>(
+                e.midiCCOut.controlNumber);
+            double norm = 0.0;
+            if (ctrl == Steinberg::Vst::kPitchBend) {
+                int32_t pb14 = (static_cast<int32_t>(e.midiCCOut.value & 0x7F)) |
+                               (static_cast<int32_t>(e.midiCCOut.value2 & 0x7F) << 7);
+                norm = static_cast<double>(pb14) / 16383.0;
+            } else {
+                norm = static_cast<double>(e.midiCCOut.value & 0x7F) / 127.0;
+            }
+            if (tryMapMidiController(ch, ctrl, norm)) {
+                return env.Undefined();  // mapped — skip legacy event
+            }
+        }
+
+        inputEvents_.addEvent(e);
         return env.Undefined();
     });
 }
