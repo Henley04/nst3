@@ -106,11 +106,16 @@ elseif(UNIX)
     )
 elseif(WIN32)
     target_sources(Gain PRIVATE ${VST3_SDK_ROOT}/public.sdk/source/main/dllmain.cpp)
+    # Note: do NOT set LIBRARY_OUTPUT_DIRECTORY here. The Visual Studio
+    # multi-config generator already appends a per-config subdir (e.g.
+    # `Release/`) to the output directory, so setting it to
+    # `${CMAKE_BINARY_DIR}/Release` produces `build/Release/Release/Gain.vst3`,
+    # which the JS build script's resolveBundlePath() doesn't look for.
+    # Leaving it unset yields `build/Release/Gain.vst3`, which matches.
     set_target_properties(Gain PROPERTIES
         PREFIX ""
         OUTPUT_NAME "Gain"
         SUFFIX ".vst3"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Release"
     )
     target_compile_definitions(Gain PRIVATE
         WINDOWS=1 _WIN32 _WINDOWS NOMINMAX
