@@ -1223,7 +1223,7 @@ Returns the bitmask from `IProcessContextRequirements::getProcessContextRequirem
 
 #### `setAudioPresentationLatency(busIndex, latencySamples): boolean`
 
-Notifies the plugin of the output-presentation latency for a given bus via `IAudioPresentationLatencySamples::setAudioPresentationLatencySamples`. Plugins use this for monitoring-side plugin delay compensation.
+Notifies the plugin of the output-presentation latency for a given bus via `IAudioPresentationLatency::setAudioPresentationLatencySamples`. Plugins use this for monitoring-side plugin delay compensation.
 
 **Parameters**:
 
@@ -1236,7 +1236,7 @@ Notifies the plugin of the output-presentation latency for a given bus via `IAud
 
 #### `setChannelContextInfo(info): boolean`
 
-Builds an `IAttributeList` from the supplied `info` object and passes it to `IInfoListener::informListener` so the plugin can update its notion of which track / channel it is loaded on. The plugin may use the channel name, color, and namespace for display purposes.
+Builds an `IAttributeList` from the supplied `info` object and passes it to `IInfoListener::setChannelContextInfos` so the plugin can update its notion of which track / channel it is loaded on. The plugin may use the channel name, color, and namespace for display purposes.
 
 **Parameters**:
 
@@ -1436,15 +1436,13 @@ Snapshot returned by `getProcessContext()`.
 ```ts
 interface ChannelContextInfo {
   channelIdx?: number;          // Zero-based channel index within its bus (int32).
-  pluginName?: string;          // Plugin display name (String128).
   trackName?: string;           // Track / channel name (String128).
   namespaceName?: string;       // Channel namespace, e.g. bus or group name (String128).
   channelColor?: number;        // Packed 32-bit ARGB value (uint32).
-  channelColorLength?: number;  // Color length / format hint (int32).
 }
 ```
 
-Channel-context info accepted by `setChannelContextInfo(info)`. The host builds an `IAttributeList` from these fields and passes it to the plugin's `IInfoListener::informListener`. All fields are optional; only present fields are forwarded.
+Channel-context info accepted by `setChannelContextInfo(info)`. The host builds an `IAttributeList` from these fields and passes it to the plugin's `IInfoListener::setChannelContextInfos`. All fields are optional; only present fields are forwarded.
 
 ### New Enums
 
@@ -1488,59 +1486,60 @@ VST3 knob modes (mirrors `Steinberg::Vst::IEditController2::KnobMode`). Pass one
 
 #### `NoteExpressionTypeIds`
 
-Note-expression type IDs (mirrors `Steinberg::Vst::NoteExpressionTypeIDs`). Built-in type IDs exposed by `INoteExpressionController`; plugins may also define custom type IDs above `kPitchTypeID`.
+Note-expression type IDs (mirrors `Steinberg::Vst::NoteExpressionTypeIDs`). The pinned SDK exposes six built-in type IDs; later SDKs add `SoundPressure` / `SoundPowerOctave` / `Pitch`, which are NOT exposed here. Plugins may also define custom type IDs at or above `kCustomStart` (= `100000`).
 
-| Name               | Value |
-|--------------------|-------|
-| `Volume`           | `0`   |
-| `Pan`              | `1`   |
-| `Tuning`           | `2`   |
-| `Brightness`       | `3`   |
-| `Vibrato`          | `4`   |
-| `Expression`       | `5`   |
-| `SoundPressure`    | `6`   |
-| `SoundPowerOctave` | `7`   |
-| `Pitch`            | `8`   |
+| Name          | Value |
+|---------------|-------|
+| `Volume`      | `0`   |
+| `Pan`         | `1`   |
+| `Tuning`      | `2`   |
+| `Vibrato`     | `3`   |
+| `Expression`  | `4`   |
+| `Brightness`  | `5`   |
 
 #### `SpeakerArrangement`
 
 VST3 speaker arrangements (mirrors `Steinberg::Vst::SpeakerArr` constants). Pass these to `setBusArrangement()` and read them from `getBusArrangement()` / `BusInfo.speakerArrangement`.
 
-| Name        | Value |
+The underlying SDK values are bitmask speaker-arrangement codes, **not** a sequential enum — always reference entries by name, never by hardcoded integer.
+
+| Name        | Notes |
 |-------------|-------|
-| `Mono`      | `0`   |
-| `Stereo`    | `1`   |
-| `_30Stereo` | `2`   |
-| `_31Cine`   | `3`   |
-| `_40Cine`   | `4`   |
-| `_50`       | `5`   |
-| `_51`       | `6`   |
-| `_60Cine`   | `7`   |
-| `_61Cine`   | `8`   |
-| `_70Cine`   | `9`   |
-| `_71Cine`   | `10`  |
-| `_71_2`     | `11`  |
-| `_71_4`     | `12`  |
+| `Mono`      | mono                              |
+| `Stereo`    | L, R                              |
+| `_30Cine`   | L, R, C                           |
+| `_31Cine`   | L, R, C, LFE                      |
+| `_40Cine`   | L, R, C, S                        |
+| `_50`       | L, R, C, Ls, Rs                   |
+| `_51`       | L, R, C, LFE, Ls, Rs              |
+| `_60Cine`   | L, R, C, Ls, Rs, Cs               |
+| `_61Cine`   | L, R, C, LFE, Ls, Rs, Cs          |
+| `_70Cine`   | L, R, C, Ls, Rs, Lc, Rc           |
+| `_71Cine`   | L, R, C, LFE, Ls, Rs, Lc, Rc      |
+| `_71_2`     | L, R, C, LFE, Ls, Rs, LsR, RsR    |
+| `_71_4`     | L, R, C, LFE, Ls, Rs, LsR, RsR, Lc, Rc, Cs, LFE2 |
 
 #### `ProcessContextRequirementFlags`
 
-VST3 process-context requirement flags (mirrors `Steinberg::Vst::IProcessContextRequirements::ProcessContextRequirementFlags`). Returned by `getProcessContextRequirements()` as a bitmask so the host can decide which `ProcessContext` fields to recompute each block.
+VST3 process-context requirement flags (mirrors `Steinberg::Vst::IProcessContextRequirements::Flags`). Returned by `getProcessContextRequirements()` as a bitmask so the host can decide which `ProcessContext` fields to recompute each block. Bit values match the SDK exactly.
 
-| Name                     | Value       |
-|--------------------------|-------------|
-| `NeedTempo`              | `1 << 0` (`1`)    |
-| `NeedBars`               | `1 << 1` (`2`)    |
-| `NeedCyclePos`           | `1 << 2` (`4`)    |
-| `NeedTimeSignature`      | `1 << 3` (`8`)    |
-| `NeedSamplesToNextClock` | `1 << 4` (`16`)   |
-| `NeedSystemTime`         | `1 << 5` (`32`)   |
-| `NeedContinousTime`      | `1 << 6` (`64`)   |
-| `NeedFrameRate`          | `1 << 7` (`128`)  |
-| `NeedTransportState`     | `1 << 8` (`256`)  |
+| Name                     | Value            |
+|--------------------------|------------------|
+| `NeedSystemTime`         | `1 << 0` (`1`)    |
+| `NeedContinousTimeSamples` | `1 << 1` (`2`)  |
+| `NeedProjectTimeMusic`   | `1 << 2` (`4`)    |
+| `NeedBarPositionMusic`   | `1 << 3` (`8`)    |
+| `NeedCycleMusic`         | `1 << 4` (`16`)   |
+| `NeedSamplesToNextClock` | `1 << 5` (`32`)   |
+| `NeedTempo`              | `1 << 6` (`64`)   |
+| `NeedTimeSignature`      | `1 << 7` (`128`)  |
+| `NeedChord`              | `1 << 8` (`256`)  |
+| `NeedFrameRate`          | `1 << 9` (`512`)  |
+| `NeedTransportState`     | `1 << 10` (`1024`)|
 
 #### `ChannelContextInfoFlags`
 
-Bitmask flags describing which `ChannelContextInfo` fields are present (mirrors `Steinberg::Vst::ChannelContextInfo::ChannelContextInfoFlags`).
+Host-side convention bitmask describing which `ChannelContextInfo` fields are present. Note: the VST3 SDK at the pinned version has no corresponding `ChannelContextInfoFlags` enum — these flag constants are an nst3-side convention, not a mirror of an SDK enum.
 
 | Name                          | Value       |
 |-------------------------------|-------------|

@@ -33,7 +33,7 @@ below.
 - Routing info — `getRoutingInfo(srcBus, dstBus)`.
 - Configurable `ProcessContext` — `setProcessContext(opts)`, `getProcessContext()`, `ProcessContextOptions` type.
 - `IProcessContextRequirements` — `getProcessContextRequirements()`, `ProcessContextRequirementFlags` enum; the host gates recompute of unneeded `ProcessContext` fields each block.
-- `IAudioPresentationLatencySamples` — `setAudioPresentationLatency(busIndex, latencySamples)`.
+- `IAudioPresentationLatency` — `setAudioPresentationLatency(busIndex, latencySamples)`.
 - `IInfoListener` — `setChannelContextInfo(info)`, `ChannelContextInfo` type, `ChannelContextInfoFlags` enum.
 - `IPrefetchableSupport` — `isPrefetchable()`.
 - `IEditController2` — `setKnobMode(mode)`, `KnobMode` enum.

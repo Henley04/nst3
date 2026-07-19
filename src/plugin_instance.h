@@ -33,7 +33,8 @@
 #include "pluginterfaces/vst/ivstunits.h"
 #include "pluginterfaces/vst/ivstnoteexpression.h"
 #include "pluginterfaces/vst/ivstmidicontrollers.h"
-#include "pluginterfaces/vst/ivstinfoattributes.h"
+#include "pluginterfaces/vst/ivstchannelcontextinfo.h"
+#include "pluginterfaces/vst/ivstprefetchablesupport.h"
 
 namespace nst3 {
 
@@ -173,7 +174,7 @@ public:
     //--- IProcessContextRequirements ----------------------------------
     Napi::Value GetProcessContextRequirements(const Napi::CallbackInfo& info);
 
-    //--- IAudioPresentationLatencySamples ----------------------------
+    //--- IAudioPresentationLatency ----------------------------------
     Napi::Value SetAudioPresentationLatency(const Napi::CallbackInfo& info);
 
     //--- IInfoListener -------------------------------------------------
@@ -280,10 +281,10 @@ private:
     // to drive the IProcessContextRequirements gating, audio presentation
     // latency notifications, and prefetchable query.
     Steinberg::IPtr<Steinberg::Vst::IProcessContextRequirements> processContextReqs_;
-    Steinberg::IPtr<Steinberg::Vst::IAudioPresentationLatencySamples> audioPresLatency_;
+    Steinberg::IPtr<Steinberg::Vst::IAudioPresentationLatency> audioPresLatency_;
     Steinberg::IPtr<Steinberg::Vst::IPrefetchableSupport> prefetchable_;
     // Optional controller-side info listener (channel context info).
-    Steinberg::IPtr<Steinberg::Vst::IInfoListener> infoListener_;
+    Steinberg::IPtr<Steinberg::Vst::ChannelContext::IInfoListener> infoListener_;
     // Optional IEditController2 (host→plugin knob mode + openHelp/openAbout).
     // Only setComponentHandler→setDirty is plugin→host (handled by
     // ComponentHandler). setKnobMode / openHelp / openAboutBox are host→plugin

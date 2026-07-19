@@ -16,6 +16,7 @@
 
 #include "public.sdk/source/vst/utility/uid.h"
 #include "public.sdk/source/vst/hosting/module.h"
+#include "public.sdk/source/vst/hosting/hostclasses.h"
 
 #include "pluginterfaces/vst/ivstcomponent.h"
 #include "pluginterfaces/vst/ivstaudioprocessor.h"
@@ -98,7 +99,7 @@ Napi::Object PluginInstance::Init(Napi::Env env, Napi::Object exports) {
         InstanceMethod("getProcessContext", &PluginInstance::GetProcessContext),
         //--- IProcessContextRequirements --------------------------------
         InstanceMethod("getProcessContextRequirements", &PluginInstance::GetProcessContextRequirements),
-        //--- IAudioPresentationLatencySamples --------------------------
+        //--- IAudioPresentationLatency ---------------------------------
         InstanceMethod("setAudioPresentationLatency", &PluginInstance::SetAudioPresentationLatency),
         //--- IInfoListener ----------------------------------------------
         InstanceMethod("setChannelContextInfo", &PluginInstance::SetChannelContextInfo),
@@ -285,14 +286,14 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
     //   - IProcessContextRequirements: lets us know which ProcessContext
     //     fields the plugin actually consumes, so we can skip recompute work
     //     and always set the requested state bits.
-    //   - IAudioPresentationLatencySamples: lets the host inform the plugin
+    //   - IAudioPresentationLatency: lets the host inform the plugin
     //     of the output-presentation latency per bus (for monitoring PDC).
     //   - IPrefetchableSupport: lets the host query whether the plugin can
     //     run in a prefetch (look-ahead) rendering mode.
     processContextReqs_ =
         Steinberg::U::cast<Steinberg::Vst::IProcessContextRequirements>(audioProcessor_);
     audioPresLatency_ =
-        Steinberg::U::cast<Steinberg::Vst::IAudioPresentationLatencySamples>(audioProcessor_);
+        Steinberg::U::cast<Steinberg::Vst::IAudioPresentationLatency>(audioProcessor_);
     prefetchable_ =
         Steinberg::U::cast<Steinberg::Vst::IPrefetchableSupport>(audioProcessor_);
 
@@ -336,7 +337,7 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
         keyswitchCtrl_ = Steinberg::U::cast<Steinberg::Vst::IKeyswitchController>(controller_);
         // Query optional IInfoListener for channel-context-info notifications
         // (host tells the plugin which track / channel it is loaded on).
-        infoListener_ = Steinberg::U::cast<Steinberg::Vst::IInfoListener>(controller_);
+        infoListener_ = Steinberg::U::cast<Steinberg::Vst::ChannelContext::IInfoListener>(controller_);
         // Query optional IEditController2 for host→plugin knob-mode selection.
         // (openHelp / openAboutBox are also on IEditController2 but are not
         // exposed as JS methods in this version — they relate to GUI windows.)
@@ -408,7 +409,7 @@ bool PluginInstance::setup(const std::string& path, const HostOptions& opts,
     // symbolicSampleSize are derived from the user's HostOptions / LoadOptions
     // and the plugin's canProcessSampleSize response.
     std::memset(&processData_, 0, sizeof(processData_));
-    processData_.processMode = static_cast<Steinberg::Vst::ProcessMode>(processMode_);
+    processData_.processMode = static_cast<Steinberg::Vst::ProcessModes>(processMode_);
     processData_.symbolicSampleSize = (activeSampleSize_ == 64)
         ? Steinberg::Vst::kSample64 : Steinberg::Vst::kSample32;
     processData_.inputParameterChanges = &inputParams_;
@@ -810,7 +811,7 @@ Napi::Value PluginInstance::SetActive(const Napi::CallbackInfo& info) {
             // chosen process mode and the (possibly fallback-corrected)
             // sample size stored in activeSampleSize_.
             Steinberg::Vst::ProcessSetup setup{
-                static_cast<Steinberg::Vst::ProcessMode>(processMode_),
+                static_cast<Steinberg::Vst::ProcessModes>(processMode_),
                 (activeSampleSize_ == 64)
                     ? Steinberg::Vst::kSample64 : Steinberg::Vst::kSample32,
                 opts_.maxBlockSize,
@@ -1003,8 +1004,8 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
             if (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedSystemTime) {
                 processContext_.state |= Steinberg::Vst::ProcessContext::kSystemTimeValid;
             }
-            if (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedContinousTime) {
-                processContext_.state |= Steinberg::Vst::ProcessContext::kContinousTimeValid;
+            if (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedContinousTimeSamples) {
+                processContext_.state |= Steinberg::Vst::ProcessContext::kContTimeValid;
             }
         }
 
@@ -1047,8 +1048,8 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
             // cycle position (or when no requirements were declared, in which
             // case we compute it for backward compatibility).
             const bool needBars = (ctxReqs == 0xFFFFFFFFu) ||
-                (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedBars) ||
-                (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedCyclePos);
+                (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedBarPositionMusic) ||
+                (ctxReqs & Steinberg::Vst::IProcessContextRequirements::kNeedCycleMusic);
             if (needBars &&
                 (processContext_.state & Steinberg::Vst::ProcessContext::kTempoValid)) {
                 double quartersPerBar = static_cast<double>(
@@ -1061,7 +1062,7 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
                 processContext_.barPositionMusic = bars * quartersPerBar;
                 processContext_.state |= Steinberg::Vst::ProcessContext::kBarPositionValid;
             }
-            if (processContext_.state & Steinberg::Vst::ProcessContext::kContinousTimeValid) {
+            if (processContext_.state & Steinberg::Vst::ProcessContext::kContTimeValid) {
                 processContext_.continousTimeSamples += numSamples;
             }
         }
@@ -1366,12 +1367,10 @@ Napi::Value PluginInstance::PlainToNormalized(const Napi::CallbackInfo& info) {
     Steinberg::Vst::ParamID id = static_cast<Steinberg::Vst::ParamID>(info[0].As<Napi::Number>().Int32Value());
     Steinberg::Vst::ParamValue plain = info[1].As<Napi::Number>().DoubleValue();
     return translateExceptions(env, [&]() -> Napi::Value {
-        Steinberg::Vst::ParamValue value = 0.0;
-        Steinberg::tresult r = controller_->plainToNormalized(id, plain, value);
-        if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
-            throwNst(ErrorCode::InvalidParameter,
-                     "IEditController::plainToNormalized failed");
-        }
+        // IEditController::plainParamToNormalized returns a ParamValue
+        // directly (no tresult out-param variant exists in the SDK).
+        Steinberg::Vst::ParamValue value =
+            controller_->plainParamToNormalized(id, plain);
         return Napi::Number::New(env, value);
     });
 }
@@ -1387,12 +1386,10 @@ Napi::Value PluginInstance::NormalizedToPlain(const Napi::CallbackInfo& info) {
     Steinberg::Vst::ParamID id = static_cast<Steinberg::Vst::ParamID>(info[0].As<Napi::Number>().Int32Value());
     Steinberg::Vst::ParamValue normalized = info[1].As<Napi::Number>().DoubleValue();
     return translateExceptions(env, [&]() -> Napi::Value {
-        Steinberg::Vst::ParamValue value = 0.0;
-        Steinberg::tresult r = controller_->normalizedToPlain(id, normalized, value);
-        if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
-            throwNst(ErrorCode::InvalidParameter,
-                     "IEditController::normalizedToPlain failed");
-        }
+        // IEditController::normalizedParamToPlain returns a ParamValue
+        // directly (no tresult out-param variant exists in the SDK).
+        Steinberg::Vst::ParamValue value =
+            controller_->normalizedParamToPlain(id, normalized);
         return Napi::Number::New(env, value);
     });
 }
@@ -1717,7 +1714,9 @@ Napi::Value PluginInstance::GetUnitInfo(const Napi::CallbackInfo& info) {
         o.Set("name", Napi::String::New(env, string128ToUtf8(u.name)));
         o.Set("programListId", Napi::Number::New(env, static_cast<double>(u.programListId)));
         o.Set("parentUnitId", Napi::Number::New(env, static_cast<double>(u.parentUnitId)));
-        o.Set("type", Napi::Number::New(env, static_cast<double>(u.type)));
+        // Note: the pinned SDK's UnitInfo struct has only {id, parentUnitId,
+        // name, programListId} — there is no `type` field (added in a later
+        // SDK). We do not expose a `type` property.
         return o;
     });
 }
@@ -1852,7 +1851,10 @@ Napi::Value PluginInstance::GetUnitByBusInfo(const Napi::CallbackInfo& info) {
     int32_t busIndex = o.Get("busIndex").As<Napi::Number>().Int32Value();
     return translateExceptions(env, [&]() -> Napi::Value {
         Steinberg::Vst::UnitID unitId = 0;
-        Steinberg::tresult r = unitInfo_->getUnitByBusInfo(mediaType, direction, busIndex, unitId);
+        // SDK signature: getUnitByBus(MediaType, BusDirection, busIndex,
+        // channel, UnitID&). We pass channel = -1 (all channels) since the
+        // JS API does not currently expose a per-channel query.
+        Steinberg::tresult r = unitInfo_->getUnitByBus(mediaType, direction, busIndex, -1, unitId);
         if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
             return env.Null();
         }
@@ -2080,9 +2082,18 @@ Napi::Value PluginInstance::GetKeyswitchInfo(const Napi::CallbackInfo& info) {
             throwNst(ErrorCode::InvalidParameter, "IKeyswitchController::getKeyswitchInfo failed");
         }
         Napi::Object o = Napi::Object::New(env);
-        o.Set("key", Napi::Number::New(env, static_cast<double>(ks.key)));
-        o.Set("name", Napi::String::New(env, string128ToUtf8(ks.name)));
-        o.Set("keyswitchType", Napi::Number::New(env, static_cast<double>(ks.keyswitchType)));
+        // KeyswitchInfo fields (per ivstnoteexpression.h): typeId, title,
+        // shortTitle, keyswitchMin, keyswitchMax, keyRemapped, unitId, flags.
+        // Expose the subset most useful to JS callers; `typeId` maps to the
+        // user-facing `keyswitchType` field name.
+        o.Set("keyswitchType", Napi::Number::New(env, static_cast<double>(ks.typeId)));
+        o.Set("name", Napi::String::New(env, string128ToUtf8(ks.title)));
+        o.Set("shortName", Napi::String::New(env, string128ToUtf8(ks.shortTitle)));
+        o.Set("keyswitchMin", Napi::Number::New(env, static_cast<double>(ks.keyswitchMin)));
+        o.Set("keyswitchMax", Napi::Number::New(env, static_cast<double>(ks.keyswitchMax)));
+        o.Set("keyRemapped", Napi::Number::New(env, static_cast<double>(ks.keyRemapped)));
+        o.Set("unitId", Napi::Number::New(env, static_cast<double>(ks.unitId)));
+        o.Set("flags", Napi::Number::New(env, static_cast<double>(ks.flags)));
         return o;
     });
 }
@@ -2133,10 +2144,10 @@ Napi::Value PluginInstance::GetBusList(const Napi::CallbackInfo& info) {
         o.Set("active", Napi::Boolean::New(env, isActive));
         // Speaker arrangement: only meaningful for audio buses; query the
         // current arrangement via audioProcessor_->getBusArrangement.
-        Steinberg::Vst::SpeakerArrangement arr = 0;
+        Steinberg::Vst::SpeakerArrangement spkArr = 0;
         if (mediaType == Steinberg::Vst::kAudio && audioProcessor_ &&
-            audioProcessor_->getBusArrangement(direction, i, arr) == Steinberg::kResultTrue) {
-            o.Set("speakerArrangement", Napi::Number::New(env, static_cast<double>(arr)));
+            audioProcessor_->getBusArrangement(direction, i, spkArr) == Steinberg::kResultTrue) {
+            o.Set("speakerArrangement", Napi::Number::New(env, static_cast<double>(spkArr)));
         } else {
             o.Set("speakerArrangement", Napi::Number::New(env, 0));
         }
@@ -2338,30 +2349,30 @@ Napi::Value PluginInstance::GetRoutingInfo(const Napi::CallbackInfo& info) {
                        "getRoutingInfo(srcBus, dstBus) requires two numbers");
     }
     int32_t srcBus = info[0].As<Napi::Number>().Int32Value();
-    int32_t dstBus = info[1].As<Napi::Number>().Int32Value();
     return translateExceptions(env, [&]() -> Napi::Value {
-        // Construct RoutingInfo for the source bus. We default to kAudio /
-        // kMain which is the typical case for routing queries; the SDK does
-        // not provide a way to query busType in the input, so we use kMain.
+        // Construct RoutingInfo for the source bus. The SDK RoutingInfo struct
+        // has only {mediaType, busIndex, channel} — there is no busType field
+        // on the input side. We default to kAudio which is the typical case
+        // for routing queries.
         Steinberg::Vst::RoutingInfo inInfo;
         std::memset(&inInfo, 0, sizeof(inInfo));
         inInfo.busIndex = srcBus;
-        inInfo.busMediaType = Steinberg::Vst::kAudio;
-        inInfo.busType = Steinberg::Vst::kMain;
+        inInfo.mediaType = Steinberg::Vst::kAudio;
+        inInfo.channel = -1;
         Steinberg::Vst::RoutingInfo outInfo;
         std::memset(&outInfo, 0, sizeof(outInfo));
         Steinberg::tresult r = component_->getRoutingInfo(inInfo, outInfo);
         if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
             return env.Null();
         }
-        // If the resulting busIndex doesn't match the requested destination
-        // bus, we still return what the SDK gave us — the spec only requires
-        // srcBus / dstBus / busMediaType / busType to be reported.
+        // The SDK RoutingInfo result exposes {mediaType, busIndex, channel};
+        // there is no busType on the result side. We expose those three under
+        // the JS field names {busMediaType, dstBus, channel}.
         Napi::Object o = Napi::Object::New(env);
         o.Set("srcBus", Napi::Number::New(env, static_cast<double>(inInfo.busIndex)));
         o.Set("dstBus", Napi::Number::New(env, static_cast<double>(outInfo.busIndex)));
-        o.Set("busMediaType", Napi::Number::New(env, static_cast<double>(outInfo.busMediaType)));
-        o.Set("busType", Napi::Number::New(env, static_cast<double>(outInfo.busType)));
+        o.Set("busMediaType", Napi::Number::New(env, static_cast<double>(outInfo.mediaType)));
+        o.Set("channel", Napi::Number::New(env, static_cast<double>(outInfo.channel)));
         return o;
     });
 }
@@ -2484,7 +2495,7 @@ Napi::Value PluginInstance::SetProcessContext(const Napi::CallbackInfo& info) {
         int64_t ct = 0;
         if (readInt64("continuousTimeSamples", &ct)) {
             processContext_.continousTimeSamples = ct;
-            processContext_.state |= Steinberg::Vst::ProcessContext::kContinousTimeValid;
+            processContext_.state |= Steinberg::Vst::ProcessContext::kContTimeValid;
         }
         return env.Undefined();
     });
@@ -2531,7 +2542,7 @@ Napi::Value PluginInstance::GetProcessContextRequirements(const Napi::CallbackIn
 }
 
 //------------------------------------------------------------------------
-// IAudioPresentationLatencySamples — setAudioPresentationLatency
+// IAudioPresentationLatency — setAudioPresentationLatency
 //------------------------------------------------------------------------
 Napi::Value PluginInstance::SetAudioPresentationLatency(const Napi::CallbackInfo& info) {
     Napi::Env env = info.Env();
@@ -2546,8 +2557,11 @@ Napi::Value PluginInstance::SetAudioPresentationLatency(const Napi::CallbackInfo
     }
     int32_t busIndex = info[0].As<Napi::Number>().Int32Value();
     uint32_t latencySamples = info[1].As<Napi::Number>().Uint32Value();
+    // IAudioPresentationLatency::setAudioPresentationLatencySamples takes a
+    // BusDirection (kOutput, since this is the host→plugin presentation
+    // latency for output buses) + busIndex + latencyInSamples.
     Steinberg::tresult r = audioPresLatency_->setAudioPresentationLatencySamples(
-        busIndex, latencySamples);
+        Steinberg::Vst::kOutput, busIndex, latencySamples);
     return Napi::Boolean::New(env, r == Steinberg::kResultTrue || r == Steinberg::kResultOk);
 }
 
@@ -2566,11 +2580,15 @@ Napi::Value PluginInstance::SetChannelContextInfo(const Napi::CallbackInfo& info
     }
     Napi::Object o = info[0].As<Napi::Object>();
     return translateExceptions(env, [&]() -> Napi::Value {
-        // Build an IAttributeList with the known ChannelContextInfo keys.
-        // The plugin's IInfoListener::informListener receives this list and
-        // pulls out the keys it cares about.
+        // Build an IAttributeList with the known channel-context keys (the
+        // SDK exposes these under the Steinberg::Vst::ChannelContext
+        // namespace in ivstchannelcontextinfo.h). The plugin's
+        // IInfoListener::setChannelContextInfos receives this list and pulls
+        // out the keys it cares about. We use the SDK's HostAttributeList
+        // helper (a ready-to-use IAttributeList implementation) instead of
+        // asking the host application to create one.
         Steinberg::IPtr<Steinberg::Vst::IAttributeList> list(
-            hostApp_ ? hostApp_->createAttributeList() : nullptr);
+            Steinberg::Vst::HostAttributeList::make());
         if (!list) {
             throwNst(ErrorCode::Unknown, "Failed to create IAttributeList");
         }
@@ -2578,47 +2596,33 @@ Napi::Value PluginInstance::SetChannelContextInfo(const Napi::CallbackInfo& info
         // channelIdx (int32)
         if (o.Has("channelIdx") && o.Get("channelIdx").IsNumber()) {
             int32_t idx = o.Get("channelIdx").As<Napi::Number>().Int32Value();
-            list->setInt(Steinberg::Vst::ChannelContextInfo::kChannelIndexKey,
-                         static_cast<int64>(idx));
-        }
-        // pluginName (String128)
-        if (o.Has("pluginName") && o.Get("pluginName").IsString()) {
-            std::string s = o.Get("pluginName").As<Napi::String>().Utf8Value();
-            Steinberg::Vst::String128 s128;
-            utf8ToString128(s, s128);
-            list->setString(Steinberg::Vst::ChannelContextInfo::kChannelPluginNameKey,
-                            s128);
+            list->setInt(Steinberg::Vst::ChannelContext::kChannelIndexKey,
+                         static_cast<Steinberg::int64>(idx));
         }
         // trackName / channelName (String128)
         if (o.Has("trackName") && o.Get("trackName").IsString()) {
             std::string s = o.Get("trackName").As<Napi::String>().Utf8Value();
             Steinberg::Vst::String128 s128;
             utf8ToString128(s, s128);
-            list->setString(Steinberg::Vst::ChannelContextInfo::kChannelNameKey,
+            list->setString(Steinberg::Vst::ChannelContext::kChannelNameKey,
                             s128);
         }
-        // namespaceName (String128)
+        // namespaceName (String128) — SDK key is kChannelIndexNamespaceKey.
         if (o.Has("namespaceName") && o.Get("namespaceName").IsString()) {
             std::string s = o.Get("namespaceName").As<Napi::String>().Utf8Value();
             Steinberg::Vst::String128 s128;
             utf8ToString128(s, s128);
-            list->setString(Steinberg::Vst::ChannelContextInfo::kChannelNamespaceKey,
+            list->setString(Steinberg::Vst::ChannelContext::kChannelIndexNamespaceKey,
                             s128);
         }
         // channelColor (uint32 packed ARGB)
         if (o.Has("channelColor") && o.Get("channelColor").IsNumber()) {
             uint32_t color = o.Get("channelColor").As<Napi::Number>().Uint32Value();
-            list->setInt(Steinberg::Vst::ChannelContextInfo::kChannelColorKey,
-                         static_cast<int64>(color));
-        }
-        // channelColorLength (int32)
-        if (o.Has("channelColorLength") && o.Get("channelColorLength").IsNumber()) {
-            int32_t cl = o.Get("channelColorLength").As<Napi::Number>().Int32Value();
-            list->setInt(Steinberg::Vst::ChannelContextInfo::kChannelColorLengthKey,
-                         static_cast<int64>(cl));
+            list->setInt(Steinberg::Vst::ChannelContext::kChannelColorKey,
+                         static_cast<Steinberg::int64>(color));
         }
 
-        Steinberg::tresult r = infoListener_->informListener(list);
+        Steinberg::tresult r = infoListener_->setChannelContextInfos(list);
         if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
             return Napi::Boolean::New(env, false);
         }
@@ -2636,15 +2640,16 @@ Napi::Value PluginInstance::IsPrefetchable(const Napi::CallbackInfo& info) {
         // Plugin doesn't implement the interface — conservatively false.
         return Napi::Boolean::New(env, false);
     }
-    // IPrefetchableSupport::isPrefetchable writes a TBool (kTrue/kFalse) into
-    // the out parameter and returns a tresult. Treat success + kTrue as
+    // IPrefetchableSupport::getPrefetchableSupport writes a PrefetchableSupport
+    // enum value (kIsNeverPrefetchable / kIsYetPrefetchable / kIsNotYetPrefetchable)
+    // into the out parameter and returns a tresult. Treat kIsYetPrefetchable as
     // prefetchable; everything else as not prefetchable.
-    Steinberg::TBool isPrefetch = Steinberg::kFalse;
-    Steinberg::tresult r = prefetchable_->isPrefetchable(isPrefetch);
+    Steinberg::Vst::PrefetchableSupport prefetch = Steinberg::Vst::kIsNeverPrefetchable;
+    Steinberg::tresult r = prefetchable_->getPrefetchableSupport(prefetch);
     if (r != Steinberg::kResultTrue && r != Steinberg::kResultOk) {
         return Napi::Boolean::New(env, false);
     }
-    return Napi::Boolean::New(env, isPrefetch != Steinberg::kFalse);
+    return Napi::Boolean::New(env, prefetch == Steinberg::Vst::kIsYetPrefetchable);
 }
 
 //------------------------------------------------------------------------
@@ -2922,7 +2927,7 @@ Napi::Value PluginInstance::SetProcessSetup(const Napi::CallbackInfo& info) {
         // processMode and symbolicSampleSize. setupProcessing() is invoked
         // by the next setActive(true), which propagates the new sample rate
         // and max block size to the plugin.
-        processData_.processMode = static_cast<Steinberg::Vst::ProcessMode>(processMode_);
+        processData_.processMode = static_cast<Steinberg::Vst::ProcessModes>(processMode_);
         processData_.symbolicSampleSize = (activeSampleSize_ == 64)
             ? Steinberg::Vst::kSample64 : Steinberg::Vst::kSample32;
 

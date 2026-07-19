@@ -64,7 +64,7 @@ describe('Host handler events', { skip: !ensurePluginBuilt() }, () => {
     assert.strictEqual(ok, false);
   });
 
-  test('setAudioPresentationLatency(0, 256) returns false (fixture does not implement IAudioPresentationLatencySamples)', () => {
+  test('setAudioPresentationLatency(0, 256) returns false (fixture does not implement IAudioPresentationLatency)', () => {
     const ok = plugin.setAudioPresentationLatency(0, 256);
     assert.strictEqual(ok, false);
   });
