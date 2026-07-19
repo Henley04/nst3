@@ -38,10 +38,10 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: '20'
+          node-version: '22'
 
       - name: Setup Python 3 (for node-gyp)
         uses: actions/setup-python@v5
@@ -95,11 +95,15 @@ jobs:
         uses: actions/checkout@v4
 
       # Trusted publishing requires Node.js >= 22.14.0 and npm CLI >= 11.5.1.
+      # IMPORTANT: do NOT set `registry-url` here. Setting it makes
+      # actions/setup-node write an .npmrc that pulls auth from NODE_AUTH_TOKEN,
+      # which shadows the OIDC flow and causes 404 on publish. With id-token:
+      # write permission and no .npmrc token, `npm publish --provenance` will
+      # authenticate via the OIDC token issued by GitHub Actions.
       - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
           node-version: '22'
-          registry-url: 'https://registry.npmjs.org'
 
       - name: Update npm to latest
         run: npm install -g npm@latest
