@@ -99,7 +99,7 @@ describe('64-bit audio processing (kSample64)', { skip: !ensurePluginBuilt() }, 
           outputs: makeSilence(2, 64),
           numSamples: 64,
         }),
-      /VST3_INVALID_BUFFER/
+      (err) => err.code === 'VST3_INVALID_BUFFER'
     );
   });
 });

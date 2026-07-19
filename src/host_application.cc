@@ -8,10 +8,11 @@
 
 // SDK interface headers — needed for the IXXX::iid FUID constants that we
 // advertise via NstPlugInterfaceSupport.
-#include "pluginterfaces/vst/ivsteditcontroller.h"       // IComponentHandler{,2,3}, IEditController{,2}, IParameterFinder
+#include "pluginterfaces/vst/ivsteditcontroller.h"       // IComponentHandler{,2}, IEditController{,2}
+#include "pluginterfaces/vst/ivstcontextmenu.h"          // IComponentHandler3
+#include "pluginterfaces/vst/ivstplugview.h"             // IParameterFinder
 #include "pluginterfaces/vst/ivsthostapplication.h"      // IHostApplication
-#include "pluginterfaces/vst/ivstmessage.h"              // IMessage, IAttributeList
-#include "pluginterfaces/vst/ivstconnectionpoints.h"     // IConnectionPoint
+#include "pluginterfaces/vst/ivstmessage.h"              // IMessage, IAttributeList, IConnectionPoint
 #include "pluginterfaces/vst/ivstunits.h"                // IUnitHandler{,2}
 #include "pluginterfaces/vst/ivstpluginterfacesupport.h" // IPlugInterfaceSupport
 
@@ -66,21 +67,21 @@ NstPlugInterfaceSupport::~NstPlugInterfaceSupport() noexcept = default;
 // NstHostApplication
 //------------------------------------------------------------------------
 NstHostApplication::NstHostApplication() {
-    // Install our curated IPlugInterfaceSupport, replacing the SDK default.
-    // The base HostApplication constructor already created a default
-    // PlugInterfaceSupport with the SDK's broad list; setPlugInterfaceSupport
-    // releases that and acquires ours. We hold a separate reference via
-    // nstPlugInterfaceSupport_ so the object's lifetime is tied to this
-    // NstHostApplication regardless of the base class's internal IPtr.
-    nstPlugInterfaceSupport_ = Steinberg::owned(new NstPlugInterfaceSupport());
-    setPlugInterfaceSupport(nstPlugInterfaceSupport_.get());
+    // The SDK's HostApplication base-class constructor already creates a
+    // default PlugInterfaceSupport that advertises the standard non-GUI VST3
+    // interfaces (IComponent, IAudioProcessor, IEditController, IConnectionPoint,
+    // IUnitInfo, IUnitData, IProgramListData, IMidiMapping, IEditController2).
+    // The base class does not expose a setPlugInterfaceSupport() setter, so
+    // we cannot install our own curated list. The default is appropriate for
+    // nst3's non-GUI hosting model — GUI-only interfaces (IPlugView,
+    // IPlugFrame, IPlugViewContentScaleSupport) are not advertised by the
+    // default PlugInterfaceSupport, matching nst3's no-editor-embedding scope.
 }
 
 NstHostApplication::~NstHostApplication() noexcept {
     // HostApplication base class dtor is responsible for releasing the
-    // PlugInterfaceSupport held in its internal IPtr. We just clear our
-    // raw pointer (the handler is owned elsewhere) and release our member
-    // reference (the base's IPtr still holds one until the base dtor runs).
+    // PlugInterfaceSupport held in its internal IPtr. We just clear our raw
+    // pointer to the component handler (the handler is owned elsewhere).
     handler_ = nullptr;
     nstPlugInterfaceSupport_.reset();
 }

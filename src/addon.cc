@@ -136,61 +136,63 @@ static Napi::Object DefineBusDirection(Napi::Env env) {
     return o;
 }
 
-// KnobMode enum — mirrors Steinberg::Vst::IEditController2::KnobMode values
-// (kCircularMode=0, kRelativeCircularMode=1, kLinearMode=2). Passed to
+// KnobMode enum — mirrors Steinberg::Vst::KnobModes values
+// (kCircularMode=0, kRelativCircularMode=1, kLinearMode=2). Passed to
 // `plugin.setKnobMode(mode)` to drive the plugin's IEditController2.
+// Note: the SDK enum is `KnobModes` (plural) and `KnobMode` is just a
+// `using KnobMode = int32;` typedef. The SDK also spells the relative-mode
+// constant `kRelativCircularMode` (no 'e'); we mirror the SDK spelling for
+// the k-alias and expose the correct-English `RelativeCircular` alias.
 static Napi::Object DefineKnobMode(Napi::Env env) {
-    using KM = Steinberg::Vst::IEditController2::KnobMode;
+    using KM = Steinberg::Vst::KnobModes;
     Napi::Object o = Napi::Object::New(env);
     o.Set("Circular",           Napi::Number::New(env, static_cast<double>(KM::kCircularMode)));
-    o.Set("RelativeCircular",   Napi::Number::New(env, static_cast<double>(KM::kRelativeCircularMode)));
+    o.Set("RelativeCircular",   Napi::Number::New(env, static_cast<double>(KM::kRelativCircularMode)));
     o.Set("Linear",             Napi::Number::New(env, static_cast<double>(KM::kLinearMode)));
-    // k-prefixed aliases for SDK-faithful naming.
+    // k-prefixed aliases for SDK-faithful naming (note SDK typo: kRelativCircularMode).
     o.Set("kCircularMode",          Napi::Number::New(env, static_cast<double>(KM::kCircularMode)));
-    o.Set("kRelativeCircularMode",  Napi::Number::New(env, static_cast<double>(KM::kRelativeCircularMode)));
+    o.Set("kRelativCircularMode",   Napi::Number::New(env, static_cast<double>(KM::kRelativCircularMode)));
+    // Common-misspelling alias for callers who type the correct-English form.
+    o.Set("kRelativeCircularMode",  Napi::Number::New(env, static_cast<double>(KM::kRelativCircularMode)));
     o.Set("kLinearMode",            Napi::Number::New(env, static_cast<double>(KM::kLinearMode)));
     return o;
 }
 
-// NoteExpressionTypeIds enum — mirrors Steinberg::Vst::NoteExpressionTypeIds
-// (kVolumeTypeID=0, kPanTypeID=1, kTuningTypeID=2, kBrightnessTypeID=3,
-// kVibratoTypeID=4, kExpressionTypeID=5, kSoundPressureTypeID=6,
-// kSoundPowerOctaveTypeID=7, kPitchTypeID=8).
+// NoteExpressionTypeIds enum — mirrors Steinberg::Vst::NoteExpressionTypeIDs
+// (kVolumeTypeID=0, kPanTypeID=1, kTuningTypeID=2, kVibratoTypeID=3,
+// kExpressionTypeID=4, kBrightnessTypeID=5). The pinned SDK version has only
+// these six built-in type IDs; later SDKs added kSoundPressureTypeID,
+// kSoundPowerOctaveTypeID, and kPitchTypeID, which are intentionally NOT
+// exposed here. Custom type IDs start at kCustomStart (= 100000).
 static Napi::Object DefineNoteExpressionTypeIds(Napi::Env env) {
     using NET = Steinberg::Vst::NoteExpressionTypeIDs;
     Napi::Object o = Napi::Object::New(env);
     o.Set("Volume",            Napi::Number::New(env, static_cast<double>(NET::kVolumeTypeID)));
     o.Set("Pan",               Napi::Number::New(env, static_cast<double>(NET::kPanTypeID)));
     o.Set("Tuning",            Napi::Number::New(env, static_cast<double>(NET::kTuningTypeID)));
-    o.Set("Brightness",        Napi::Number::New(env, static_cast<double>(NET::kBrightnessTypeID)));
     o.Set("Vibrato",           Napi::Number::New(env, static_cast<double>(NET::kVibratoTypeID)));
     o.Set("Expression",        Napi::Number::New(env, static_cast<double>(NET::kExpressionTypeID)));
-    o.Set("SoundPressure",     Napi::Number::New(env, static_cast<double>(NET::kSoundPressureTypeID)));
-    o.Set("SoundPowerOctave",  Napi::Number::New(env, static_cast<double>(NET::kSoundPowerOctaveTypeID)));
-    o.Set("Pitch",             Napi::Number::New(env, static_cast<double>(NET::kPitchTypeID)));
+    o.Set("Brightness",        Napi::Number::New(env, static_cast<double>(NET::kBrightnessTypeID)));
     // k-prefixed aliases for SDK-faithful naming.
     o.Set("kVolumeTypeID",            Napi::Number::New(env, static_cast<double>(NET::kVolumeTypeID)));
     o.Set("kPanTypeID",               Napi::Number::New(env, static_cast<double>(NET::kPanTypeID)));
     o.Set("kTuningTypeID",            Napi::Number::New(env, static_cast<double>(NET::kTuningTypeID)));
-    o.Set("kBrightnessTypeID",        Napi::Number::New(env, static_cast<double>(NET::kBrightnessTypeID)));
     o.Set("kVibratoTypeID",           Napi::Number::New(env, static_cast<double>(NET::kVibratoTypeID)));
     o.Set("kExpressionTypeID",        Napi::Number::New(env, static_cast<double>(NET::kExpressionTypeID)));
-    o.Set("kSoundPressureTypeID",     Napi::Number::New(env, static_cast<double>(NET::kSoundPressureTypeID)));
-    o.Set("kSoundPowerOctaveTypeID",  Napi::Number::New(env, static_cast<double>(NET::kSoundPowerOctaveTypeID)));
-    o.Set("kPitchTypeID",             Napi::Number::New(env, static_cast<double>(NET::kPitchTypeID)));
+    o.Set("kBrightnessTypeID",        Napi::Number::New(env, static_cast<double>(NET::kBrightnessTypeID)));
     return o;
 }
 
 // SpeakerArrangement enum — mirrors Steinberg::Vst::SpeakerArr constants
-// (kMono, kStereo, k30Stereo, k31Cine, k40Cine, k50, k51, k60Cine, k61Cine,
+// (kMono, kStereo, k30Cine, k31Cine, k40Cine, k50, k51, k60Cine, k61Cine,
 // k70Cine, k71Cine, k71_2, k71_4). Values are the SDK's integral arrangement
 // codes; pass them to setBusArrangement() / read them from getBusArrangement().
 static Napi::Object DefineSpeakerArrangement(Napi::Env env) {
-    using SA = Steinberg::Vst::SpeakerArr;
+    namespace SA = Steinberg::Vst::SpeakerArr;
     Napi::Object o = Napi::Object::New(env);
     o.Set("Mono",        Napi::Number::New(env, static_cast<double>(SA::kMono)));
     o.Set("Stereo",      Napi::Number::New(env, static_cast<double>(SA::kStereo)));
-    o.Set("_30Stereo",   Napi::Number::New(env, static_cast<double>(SA::k30Stereo)));
+    o.Set("_30Cine",     Napi::Number::New(env, static_cast<double>(SA::k30Cine)));
     o.Set("_31Cine",     Napi::Number::New(env, static_cast<double>(SA::k31Cine)));
     o.Set("_40Cine",     Napi::Number::New(env, static_cast<double>(SA::k40Cine)));
     o.Set("_50",         Napi::Number::New(env, static_cast<double>(SA::k50)));
@@ -204,7 +206,7 @@ static Napi::Object DefineSpeakerArrangement(Napi::Env env) {
     // k-prefixed aliases for SDK-faithful naming.
     o.Set("kMono",       Napi::Number::New(env, static_cast<double>(SA::kMono)));
     o.Set("kStereo",     Napi::Number::New(env, static_cast<double>(SA::kStereo)));
-    o.Set("k30Stereo",   Napi::Number::New(env, static_cast<double>(SA::k30Stereo)));
+    o.Set("k30Cine",     Napi::Number::New(env, static_cast<double>(SA::k30Cine)));
     o.Set("k31Cine",     Napi::Number::New(env, static_cast<double>(SA::k31Cine)));
     o.Set("k40Cine",     Napi::Number::New(env, static_cast<double>(SA::k40Cine)));
     o.Set("k50",         Napi::Number::New(env, static_cast<double>(SA::k50)));
@@ -219,51 +221,62 @@ static Napi::Object DefineSpeakerArrangement(Napi::Env env) {
 }
 
 // ProcessContextRequirementFlags enum — mirrors
-// Steinberg::Vst::IProcessContextRequirements::ProcessContextRequirementFlags.
-// Returned by `plugin.getProcessContextRequirements()` as a bitmask; used by
-// the host to decide which ProcessContext fields to recompute each block.
+// Steinberg::Vst::IProcessContextRequirements::Flags. Returned by
+// `plugin.getProcessContextRequirements()` as a bitmask; used by the host to
+// decide which ProcessContext fields to recompute each block.
 static Napi::Object DefineProcessContextRequirementFlags(Napi::Env env) {
-    using PCRF = Steinberg::Vst::IProcessContextRequirements::ProcessContextRequirementFlags;
+    using PCRF = Steinberg::Vst::IProcessContextRequirements::Flags;
     Napi::Object o = Napi::Object::New(env);
-    o.Set("NeedTempo",             Napi::Number::New(env, static_cast<double>(PCRF::kNeedTempo)));
-    o.Set("NeedBars",             Napi::Number::New(env, static_cast<double>(PCRF::kNeedBars)));
-    o.Set("NeedCyclePos",         Napi::Number::New(env, static_cast<double>(PCRF::kNeedCyclePos)));
-    o.Set("NeedTimeSignature",    Napi::Number::New(env, static_cast<double>(PCRF::kNeedTimeSignature)));
-    o.Set("NeedSamplesToNextClock", Napi::Number::New(env, static_cast<double>(PCRF::kNeedSamplesToNextClock)));
-    o.Set("NeedSystemTime",       Napi::Number::New(env, static_cast<double>(PCRF::kNeedSystemTime)));
-    o.Set("NeedContinousTime",    Napi::Number::New(env, static_cast<double>(PCRF::kNeedContinousTime)));
-    o.Set("NeedFrameRate",        Napi::Number::New(env, static_cast<double>(PCRF::kNeedFrameRate)));
-    o.Set("NeedTransportState",   Napi::Number::New(env, static_cast<double>(PCRF::kNeedTransportState)));
+    o.Set("NeedSystemTime",            Napi::Number::New(env, static_cast<double>(PCRF::kNeedSystemTime)));
+    o.Set("NeedContinousTimeSamples",  Napi::Number::New(env, static_cast<double>(PCRF::kNeedContinousTimeSamples)));
+    o.Set("NeedProjectTimeMusic",      Napi::Number::New(env, static_cast<double>(PCRF::kNeedProjectTimeMusic)));
+    o.Set("NeedBarPositionMusic",      Napi::Number::New(env, static_cast<double>(PCRF::kNeedBarPositionMusic)));
+    o.Set("NeedCycleMusic",            Napi::Number::New(env, static_cast<double>(PCRF::kNeedCycleMusic)));
+    o.Set("NeedSamplesToNextClock",    Napi::Number::New(env, static_cast<double>(PCRF::kNeedSamplesToNextClock)));
+    o.Set("NeedTempo",                 Napi::Number::New(env, static_cast<double>(PCRF::kNeedTempo)));
+    o.Set("NeedTimeSignature",         Napi::Number::New(env, static_cast<double>(PCRF::kNeedTimeSignature)));
+    o.Set("NeedChord",                 Napi::Number::New(env, static_cast<double>(PCRF::kNeedChord)));
+    o.Set("NeedFrameRate",             Napi::Number::New(env, static_cast<double>(PCRF::kNeedFrameRate)));
+    o.Set("NeedTransportState",        Napi::Number::New(env, static_cast<double>(PCRF::kNeedTransportState)));
     // k-prefixed aliases for SDK-faithful naming.
-    o.Set("kNeedTempo",             Napi::Number::New(env, static_cast<double>(PCRF::kNeedTempo)));
-    o.Set("kNeedBars",             Napi::Number::New(env, static_cast<double>(PCRF::kNeedBars)));
-    o.Set("kNeedCyclePos",         Napi::Number::New(env, static_cast<double>(PCRF::kNeedCyclePos)));
-    o.Set("kNeedTimeSignature",    Napi::Number::New(env, static_cast<double>(PCRF::kNeedTimeSignature)));
-    o.Set("kNeedSamplesToNextClock", Napi::Number::New(env, static_cast<double>(PCRF::kNeedSamplesToNextClock)));
-    o.Set("kNeedSystemTime",       Napi::Number::New(env, static_cast<double>(PCRF::kNeedSystemTime)));
-    o.Set("kNeedContinousTime",    Napi::Number::New(env, static_cast<double>(PCRF::kNeedContinousTime)));
-    o.Set("kNeedFrameRate",        Napi::Number::New(env, static_cast<double>(PCRF::kNeedFrameRate)));
-    o.Set("kNeedTransportState",   Napi::Number::New(env, static_cast<double>(PCRF::kNeedTransportState)));
+    o.Set("kNeedSystemTime",           Napi::Number::New(env, static_cast<double>(PCRF::kNeedSystemTime)));
+    o.Set("kNeedContinousTimeSamples", Napi::Number::New(env, static_cast<double>(PCRF::kNeedContinousTimeSamples)));
+    o.Set("kNeedProjectTimeMusic",     Napi::Number::New(env, static_cast<double>(PCRF::kNeedProjectTimeMusic)));
+    o.Set("kNeedBarPositionMusic",     Napi::Number::New(env, static_cast<double>(PCRF::kNeedBarPositionMusic)));
+    o.Set("kNeedCycleMusic",           Napi::Number::New(env, static_cast<double>(PCRF::kNeedCycleMusic)));
+    o.Set("kNeedSamplesToNextClock",   Napi::Number::New(env, static_cast<double>(PCRF::kNeedSamplesToNextClock)));
+    o.Set("kNeedTempo",                Napi::Number::New(env, static_cast<double>(PCRF::kNeedTempo)));
+    o.Set("kNeedTimeSignature",        Napi::Number::New(env, static_cast<double>(PCRF::kNeedTimeSignature)));
+    o.Set("kNeedChord",                Napi::Number::New(env, static_cast<double>(PCRF::kNeedChord)));
+    o.Set("kNeedFrameRate",            Napi::Number::New(env, static_cast<double>(PCRF::kNeedFrameRate)));
+    o.Set("kNeedTransportState",       Napi::Number::New(env, static_cast<double>(PCRF::kNeedTransportState)));
     return o;
 }
 
-// ChannelContextInfoFlags enum — mirrors
-// Steinberg::Vst::ChannelContextInfo::ChannelContextInfoFlags. These describe
-// which ChannelContextInfo fields are present when sent via IInfoListener.
+// ChannelContextInfoFlags enum — convenience bit flags describing which
+// channel-context info fields are present when sent via IInfoListener. The
+// VST3 SDK does not declare a canonical flags enum for this (IInfoListener
+// simply receives an IAttributeList); these bit values are a host-side
+// convention mirrored 1:1 from index.d.ts so JS callers can build a bitmask
+// of which fields they intend to send.
 static Napi::Object DefineChannelContextInfoFlags(Napi::Env env) {
-    using CCIF = Steinberg::Vst::ChannelContextInfo::ChannelContextInfoFlags;
     Napi::Object o = Napi::Object::New(env);
-    o.Set("ContainsPluginName",          Napi::Number::New(env, static_cast<double>(CCIF::kContainsPluginName)));
-    o.Set("ContainsTrackName",           Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackName)));
-    o.Set("ContainsTrackColor",          Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackColor)));
-    o.Set("ContainsTrackNamespace",      Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackNamespace)));
-    o.Set("ContainsTrackNamespaceColor", Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackNamespaceColor)));
+    constexpr double ContainsPluginName          = 1 << 0;
+    constexpr double ContainsTrackName           = 1 << 1;
+    constexpr double ContainsTrackColor          = 1 << 2;
+    constexpr double ContainsTrackNamespace      = 1 << 3;
+    constexpr double ContainsTrackNamespaceColor = 1 << 4;
+    o.Set("ContainsPluginName",          Napi::Number::New(env, ContainsPluginName));
+    o.Set("ContainsTrackName",           Napi::Number::New(env, ContainsTrackName));
+    o.Set("ContainsTrackColor",          Napi::Number::New(env, ContainsTrackColor));
+    o.Set("ContainsTrackNamespace",      Napi::Number::New(env, ContainsTrackNamespace));
+    o.Set("ContainsTrackNamespaceColor", Napi::Number::New(env, ContainsTrackNamespaceColor));
     // k-prefixed aliases.
-    o.Set("kContainsPluginName",          Napi::Number::New(env, static_cast<double>(CCIF::kContainsPluginName)));
-    o.Set("kContainsTrackName",           Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackName)));
-    o.Set("kContainsTrackColor",          Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackColor)));
-    o.Set("kContainsTrackNamespace",      Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackNamespace)));
-    o.Set("kContainsTrackNamespaceColor", Napi::Number::New(env, static_cast<double>(CCIF::kContainsTrackNamespaceColor)));
+    o.Set("kContainsPluginName",          Napi::Number::New(env, ContainsPluginName));
+    o.Set("kContainsTrackName",           Napi::Number::New(env, ContainsTrackName));
+    o.Set("kContainsTrackColor",          Napi::Number::New(env, ContainsTrackColor));
+    o.Set("kContainsTrackNamespace",      Napi::Number::New(env, ContainsTrackNamespace));
+    o.Set("kContainsTrackNamespaceColor", Napi::Number::New(env, ContainsTrackNamespaceColor));
     return o;
 }
 

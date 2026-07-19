@@ -313,8 +313,6 @@ export interface UnitInfo {
     programListId: number;
     /** Parent unit ID, or -1 for the root unit. */
     parentUnitId: number;
-    /** Unit type (0 = simple unit, 1 = hard-clipboard-group, etc.). */
-    type: number;
 }
 
 /** Metadata for a single program list exposed by IUnitInfo. */
@@ -377,12 +375,22 @@ export interface NoteExpressionEvent {
 // -------------------------------------------------------------------------
 /** A single static keyswitch exposed by the plugin's IKeyswitchController. */
 export interface KeyswitchInfo {
-    /** MIDI key number (e.g. 60 = C4). */
-    key: number;
-    /** Human-readable keyswitch name (UTF-8). */
-    name: string;
-    /** Keyswitch type (kKeySwitchOnOff=0, kKeySwitchOnOnly=1, etc.). */
+    /** Keyswitch type ID (see `Steinberg::Vst::KeyswitchTypeID`). */
     keyswitchType: number;
+    /** Human-readable keyswitch title (UTF-8). */
+    name: string;
+    /** Short title for compact UIs (UTF-8). */
+    shortName: string;
+    /** Main keyswitch min (MIDI note 0–127). */
+    keyswitchMin: number;
+    /** Main keyswitch max (MIDI note 0–127). */
+    keyswitchMax: number;
+    /** Optional remapped key switch (default -1). */
+    keyRemapped: number;
+    /** Unit ID this keyswitch belongs to (-1 = no unit). */
+    unitId: number;
+    /** Reserved flags (currently 0). */
+    flags: number;
 }
 
 // -------------------------------------------------------------------------
@@ -424,8 +432,8 @@ export interface RoutingInfo {
     dstBus: number;
     /** Destination bus media type (0 = audio, 1 = event). */
     busMediaType: number;
-    /** Destination bus type (0 = main, 1 = aux). */
-    busType: number;
+    /** Destination channel (-1 for all channels). */
+    channel: number;
 }
 
 // -------------------------------------------------------------------------
@@ -494,28 +502,25 @@ export interface ProcessContextSnapshot extends ProcessContextOptions {
 /**
  * Channel-context info accepted by `plugin.setChannelContextInfo(info)`. The
  * host builds an `IAttributeList` from these fields and passes it to the
- * plugin's `IInfoListener::informListener`. All fields are optional; only
+ * plugin's `IInfoListener::setChannelContextInfos`. All fields are optional; only
  * present fields are forwarded.
  */
 export interface ChannelContextInfo {
     /** Zero-based channel index within its bus (int32). */
     channelIdx?: number;
-    /** Plugin display name (String128). */
-    pluginName?: string;
     /** Track / channel name (String128). */
     trackName?: string;
     /** Channel namespace name, e.g. the bus or group name (String128). */
     namespaceName?: string;
     /** Channel color as a packed 32-bit ARGB value (uint32). */
     channelColor?: number;
-    /** Color length / format hint (int32). */
-    channelColorLength?: number;
 }
 
 /**
- * Bitmask flags describing which ChannelContextInfo fields are present, as
- * declared by the SDK's `ChannelContextInfo::ChannelContextInfoFlags`. Useful
- * for filtering which fields a plugin should consume when reading an
+ * Bitmask flags describing which ChannelContextInfo fields are present, as a
+ * host-side convention (the VST3 SDK does not declare a canonical flags enum
+ * for IInfoListener; it simply receives an IAttributeList). Useful for
+ * filtering which fields a plugin should consume when reading an
  * IAttributeList.
  */
 export enum ChannelContextInfoFlags {
@@ -878,10 +883,10 @@ export class PluginInstance {
      */
     getProcessContextRequirements(): number;
 
-    //--- IAudioPresentationLatencySamples -----------------------------
+    //--- IAudioPresentationLatency ------------------------------------
     /**
      * Notifies the plugin of the output-presentation latency for a given
-     * bus via `IAudioPresentationLatencySamples::setAudioPresentationLatencySamples`.
+     * bus via `IAudioPresentationLatency::setAudioPresentationLatencySamples`.
      * Plugins use this for monitoring-side plugin delay compensation.
      *
      * @returns `true` if the plugin implements the interface and accepted
@@ -892,7 +897,7 @@ export class PluginInstance {
     //--- IInfoListener -------------------------------------------------
     /**
      * Builds an `IAttributeList` from the supplied `info` object and passes
-     * it to `IInfoListener::informListener` so the plugin can update its
+     * it to `IInfoListener::setChannelContextInfos` so the plugin can update its
      * notion of which track / channel it is loaded on. The plugin may use
      * the channel name, color, and namespace for display purposes.
      *
@@ -1083,53 +1088,58 @@ export enum KnobMode {
 }
 
 // Note-expression type IDs (mirrors Steinberg::Vst::NoteExpressionTypeIDs).
-// Built-in type IDs exposed by INoteExpressionController; plugins may also
-// define custom type IDs above kPitchTypeID.
+// The pinned SDK exposes six built-in type IDs (Volume, Pan, Tuning, Vibrato,
+// Expression, Brightness); later SDKs add SoundPressure / SoundPowerOctave /
+// Pitch, which are NOT exposed here. Plugins may also define custom type IDs
+// at or above kCustomStart (= 100000).
 export enum NoteExpressionTypeIds {
     Volume = 0,
     Pan = 1,
     Tuning = 2,
-    Brightness = 3,
-    Vibrato = 4,
-    Expression = 5,
-    SoundPressure = 6,
-    SoundPowerOctave = 7,
-    Pitch = 8,
+    Vibrato = 3,
+    Expression = 4,
+    Brightness = 5,
 }
 
 // VST3 speaker arrangements (mirrors Steinberg::Vst::SpeakerArr constants).
 // Pass these values to setBusArrangement() and read them from
-// getBusArrangement() / BusInfo.speakerArrangement.
+// getBusArrangement() / BusInfo.speakerArrangement. The numeric values are
+// the SDK's integral arrangement bitmask codes (e.g. kStereo = kSpeakerL |
+// kSpeakerR = 0x03) and are NOT a contiguous enumeration — always reference
+// them by name, never by literal number.
 export enum SpeakerArrangement {
-    Mono = 0,
-    Stereo = 1,
-    _30Stereo = 2,
-    _31Cine = 3,
-    _40Cine = 4,
-    _50 = 5,
-    _51 = 6,
-    _60Cine = 7,
-    _61Cine = 8,
-    _70Cine = 9,
-    _71Cine = 10,
-    _71_2 = 11,
-    _71_4 = 12,
+    Mono,
+    Stereo,
+    _30Cine,
+    _31Cine,
+    _40Cine,
+    _50,
+    _51,
+    _60Cine,
+    _61Cine,
+    _70Cine,
+    _71Cine,
+    _71_2,
+    _71_4,
 }
 
 // VST3 process-context requirement flags (mirrors
-// Steinberg::Vst::IProcessContextRequirements::ProcessContextRequirementFlags).
-// Returned by `plugin.getProcessContextRequirements()` as a bitmask so the
-// host can decide which ProcessContext fields to recompute each block.
+// Steinberg::Vst::IProcessContextRequirements::Flags). Returned by
+// `plugin.getProcessContextRequirements()` as a bitmask so the host can
+// decide which ProcessContext fields to recompute each block. The bit values
+// match the SDK exactly (kNeedSystemTime = 1<<0, ...).
 export enum ProcessContextRequirementFlags {
-    NeedTempo = 1 << 0,
-    NeedBars = 1 << 1,
-    NeedCyclePos = 1 << 2,
-    NeedTimeSignature = 1 << 3,
-    NeedSamplesToNextClock = 1 << 4,
-    NeedSystemTime = 1 << 5,
-    NeedContinousTime = 1 << 6,
-    NeedFrameRate = 1 << 7,
-    NeedTransportState = 1 << 8,
+    NeedSystemTime = 1 << 0,
+    NeedContinousTimeSamples = 1 << 1,
+    NeedProjectTimeMusic = 1 << 2,
+    NeedBarPositionMusic = 1 << 3,
+    NeedCycleMusic = 1 << 4,
+    NeedSamplesToNextClock = 1 << 5,
+    NeedTempo = 1 << 6,
+    NeedTimeSignature = 1 << 7,
+    NeedChord = 1 << 8,
+    NeedFrameRate = 1 << 9,
+    NeedTransportState = 1 << 10,
 }
 
 export const PluginCategory: {

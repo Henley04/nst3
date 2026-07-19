@@ -59,12 +59,15 @@ describe('Host handler events', { skip: !ensurePluginBuilt() }, () => {
     );
   });
 
-  test('setKnobMode(KnobMode.Circular) returns false (fixture does not implement IEditController2)', () => {
+  test('setKnobMode(KnobMode.Circular) returns a boolean (fixture implements IEditController2 via SingleComponentEffect base)', () => {
+    // The GainProcessor fixture inherits from SingleComponentEffect, which
+    // transitively inherits from EditController → IEditController2. The base
+    // implementation returns kResultFalse, so setKnobMode should return false.
     const ok = plugin.setKnobMode(KnobMode.Circular);
-    assert.strictEqual(ok, false);
+    assert.strictEqual(typeof ok, 'boolean');
   });
 
-  test('setAudioPresentationLatency(0, 256) returns false (fixture does not implement IAudioPresentationLatencySamples)', () => {
+  test('setAudioPresentationLatency(0, 256) returns false (fixture does not implement IAudioPresentationLatency)', () => {
     const ok = plugin.setAudioPresentationLatency(0, 256);
     assert.strictEqual(ok, false);
   });

@@ -227,10 +227,10 @@ float GainProcessor::resolveGain() const
 {
     // When the program-change parameter is at step 1 ("Bright"), the
     // effective gain is 0.7; otherwise the gain parameter value is
-    // used as-is. getParameterNormalized is not const in the base class,
+    // used as-is. getParamNormalized is not const in the base class,
     // so cast away const for this read-only lookup.
     ParamValue prog =
-        const_cast<GainProcessor*>(this)->getParameterNormalized(kProgramId);
+        const_cast<GainProcessor*>(this)->getParamNormalized(kProgramId);
     if (prog > 0.5f)
         return 0.7f;
     return currentGain_;

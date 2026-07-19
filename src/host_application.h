@@ -34,9 +34,13 @@ public:
 
 // NstHostApplication subclasses Steinberg::Vst::HostApplication and exposes
 // hooks for the host to receive callbacks from plugins (e.g. restartComponent).
-// It installs a custom IPlugInterfaceSupport (NstPlugInterfaceSupport) in its
-// constructor so plugins querying host capabilities see the accurate,
-// curated interface list rather than the SDK's default broad list.
+//
+// Note: the SDK's HostApplication base class creates a default
+// PlugInterfaceSupport in its constructor and does not expose a setter, so
+// NstHostApplication uses the SDK default rather than installing a curated
+// NstPlugInterfaceSupport. The default advertises the standard non-GUI VST3
+// interfaces and does not advertise GUI-only interfaces, which matches nst3's
+// no-editor-embedding scope.
 class NstHostApplication : public Steinberg::Vst::HostApplication {
 public:
     NstHostApplication();

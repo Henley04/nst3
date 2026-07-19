@@ -43,7 +43,14 @@ describe('State save/load', { skip: !ensurePluginBuilt() }, () => {
     flushParameter(plugin, 0.7);
     const state = plugin.saveState();
     assert.ok(state.length >= 4);
-    const gain = state.readFloatLE(0);
+    // The state is wrapped in a versioned envelope:
+    //   bytes 0-3: 'NST3' magic, byte 4: version, bytes 5-8: compLen (uint32 LE),
+    //   bytes 9..9+compLen: component-state bytes.
+    // The Gain plugin's component state is a single 4-byte float (gain).
+    assert.strictEqual(state.slice(0, 4).toString('ascii'), 'NST3');
+    const compLen = state.readUInt32LE(5);
+    assert.strictEqual(compLen, 4);
+    const gain = state.readFloatLE(9);
     assert.ok(
       approxEqual(gain, 0.7, 1e-4),
       `expected ~0.7, got ${gain}`
@@ -132,7 +139,7 @@ describe('State save/load', { skip: !ensurePluginBuilt() }, () => {
 
     const state2 = plugin.saveState();
     assert.ok(
-      approxEqual(state2.readFloatLE(0), state1.readFloatLE(0), 1e-6),
+      approxEqual(state2.readFloatLE(9), state1.readFloatLE(9), 1e-6),
       'round-trip state should match'
     );
   });

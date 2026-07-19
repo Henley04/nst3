@@ -29,10 +29,15 @@ enum GainParamIds
 
 //------------------------------------------------------------------------
 // GainProcessor — combined component + controller (SingleComponentEffect)
-//   also implements IUnitInfo and INoteExpressionController for testing.
+//   also implements IUnitInfo (via EditControllerEx1 base) and
+//   INoteExpressionController for testing.
+//
+// Note: SingleComponentEffect → EditControllerEx1 → IUnitInfo, so we do NOT
+// inherit IUnitInfo directly (that would create an ambiguous base). We only
+// inherit INoteExpressionController directly and override the IUnitInfo
+// methods we want to customize.
 //------------------------------------------------------------------------
 class GainProcessor : public SingleComponentEffect,
-                      public IUnitInfo,
                       public INoteExpressionController
 {
 public:
@@ -86,10 +91,10 @@ public:
 
     //---Interface declaration----------------
     // Multiple-interface support: replace OBJ_METHODS with DEFINE_INTERFACES
-    // so queryInterface advertises IUnitInfo and INoteExpressionController
-    // in addition to the SingleComponentEffect base interfaces.
+    // so queryInterface advertises INoteExpressionController in addition to
+    // the SingleComponentEffect base interfaces. IUnitInfo is already
+    // advertised by the EditControllerEx1 base — do not re-declare it.
     DEFINE_INTERFACES
-        DEF_INTERFACE(IUnitInfo)
         DEF_INTERFACE(INoteExpressionController)
     END_DEFINE_INTERFACES(SingleComponentEffect)
     REFCOUNT_METHODS(SingleComponentEffect)

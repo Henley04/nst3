@@ -63,22 +63,16 @@ describe('Error handling', { skip: !ensurePluginBuilt() }, () => {
     );
   });
 
-  test('process with numSamples=0 throws VST3_INVALID_BUFFER', () => {
+  test('process with numSamples=0 is a valid parameter-flush block (no throw)', () => {
     plugin = loadPlugin().plugin;
     plugin.setActive(true);
     plugin.setProcessing(true);
-    assert.throws(
-      () =>
-        plugin.process({
-          inputs: makeSilence(2, 4),
-          outputs: makeSilence(2, 4),
-          numSamples: 0,
-        }),
-      (err) => {
-        assert.strictEqual(err.code, 'VST3_INVALID_BUFFER');
-        assert.ok(err.message && err.message.length > 0);
-        return true;
-      }
+    assert.doesNotThrow(() =>
+      plugin.process({
+        inputs: makeSilence(2, 4),
+        outputs: makeSilence(2, 4),
+        numSamples: 0,
+      })
     );
   });
 
