@@ -1,6 +1,6 @@
 'use strict';
 const path = require('path');
-const { test, describe, afterEach } = require('node:test');
+const { test, describe, beforeEach, afterEach } = require('node:test');
 const assert = require('node:assert/strict');
 const { ParameterFlags } = require('../');
 const { loadPlugin, ensurePluginBuilt, PLUGIN_PATH } = require('./helpers');
@@ -16,9 +16,9 @@ describe('Parameter management', { skip: !ensurePluginBuilt() }, () => {
     plugin = null;
   });
 
-  test('getParameterCount returns 1', () => {
+  test('getParameterCount returns 2 (Gain + Program)', () => {
     plugin = loadPlugin().plugin;
-    assert.strictEqual(plugin.getParameterCount(), 1);
+    assert.strictEqual(plugin.getParameterCount(), 2);
   });
 
   test('getParameterInfo(0) returns expected fields', () => {
@@ -126,6 +126,60 @@ describe('Parameter management', { skip: !ensurePluginBuilt() }, () => {
       `expected crash, caught error, or returned value; status=${result.status} ` +
       `signal=${result.signal} stdout=${JSON.stringify(result.stdout)} ` +
       `stderr=${JSON.stringify(result.stderr)}`
+    );
+  });
+});
+
+describe('Parameter conversion (plainToNormalized / normalizedToPlain / parseParameter)', () => {
+  let plugin;
+  beforeEach(() => {
+    plugin = loadPlugin().plugin;
+    plugin.setActive(true);
+  });
+  afterEach(() => {
+    if (plugin) plugin.dispose();
+    plugin = null;
+  });
+
+  test('plainToNormalized and normalizedToPlain are identity for linear Gain parameter', () => {
+    // The Gain parameter (id=0) is linear in [0, 1], so plain == normalized.
+    // For any normalized n, normalizedToPlain(0, n) should return n, and
+    // plainToNormalized(0, n) should return n.
+    for (const n of [0, 0.25, 0.5, 0.75, 1.0]) {
+      const plain = plugin.normalizedToPlain(0, n);
+      const back = plugin.plainToNormalized(0, plain);
+      assert.ok(
+        Math.abs(back - n) < 1e-6,
+        `round-trip failed: n=${n} plain=${plain} back=${back}`
+      );
+    }
+  });
+
+  test('plainToNormalized(id, normalizedToPlain(id, 0.5)) ≈ 0.5 (round-trip)', () => {
+    const plain = plugin.normalizedToPlain(0, 0.5);
+    const normalized = plugin.plainToNormalized(0, plain);
+    assert.ok(Math.abs(normalized - 0.5) < 1e-6,
+      `round-trip of 0.5 yielded ${normalized} (plain=${plain})`);
+  });
+
+  test('parseParameter parses a plain-string value into a normalized value', () => {
+    // Gain's getParamValueByString accepts the plain value as a string.
+    // For a linear [0,1] parameter, "0.5" should parse to normalized 0.5.
+    const normalized = plugin.parseParameter(0, '0.5');
+    assert.ok(typeof normalized === 'number',
+      `parseParameter should return a number, got ${typeof normalized}`);
+    assert.ok(normalized >= 0 && normalized <= 1,
+      `normalized value ${normalized} should be in [0, 1]`);
+    // For a linear parameter, normalized == plain.
+    assert.ok(Math.abs(normalized - 0.5) < 1e-6,
+      `parseParameter("0.5") should yield 0.5 for linear gain, got ${normalized}`);
+  });
+
+  test('parseParameter throws VST3_INVALID_PARAMETER for an unparseable string', () => {
+    // The Gain parameter refuses non-numeric strings.
+    assert.throws(
+      () => plugin.parseParameter(0, 'not-a-number'),
+      /VST3_INVALID_PARAMETER/
     );
   });
 });

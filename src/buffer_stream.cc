@@ -71,4 +71,69 @@ Steinberg::tresult PLUGIN_API BufferStream::tell(Steinberg::int64* pos) {
     return Steinberg::kResultTrue;
 }
 
+//------------------------------------------------------------------------
+// Versioned state-envelope helpers (Task 21)
+//------------------------------------------------------------------------
+namespace {
+constexpr char kStateEnvelopeMagic[4] = { 0x4E, 0x53, 0x54, 0x33 }; // "NST3"
+constexpr uint8_t kStateEnvelopeVersion = 1;
+
+inline void writeU32LE(std::vector<uint8_t>& out, uint32_t v) {
+    out.push_back(static_cast<uint8_t>(v & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 8) & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 16) & 0xFF));
+    out.push_back(static_cast<uint8_t>((v >> 24) & 0xFF));
+}
+
+inline uint32_t readU32LE(const uint8_t* p) {
+    return static_cast<uint32_t>(p[0])
+         | (static_cast<uint32_t>(p[1]) << 8)
+         | (static_cast<uint32_t>(p[2]) << 16)
+         | (static_cast<uint32_t>(p[3]) << 24);
+}
+} // namespace
+
+std::vector<uint8_t> composeStateEnvelope(const std::vector<uint8_t>& componentState,
+                                          const std::vector<uint8_t>& controllerState) {
+    // Header: 4 (magic) + 1 (version) + 4 (compLen) = 9 bytes,
+    // followed by component bytes, then 4 (ctrlLen) + controller bytes.
+    std::vector<uint8_t> out;
+    out.reserve(9 + componentState.size() + 4 + controllerState.size());
+    out.insert(out.end(), kStateEnvelopeMagic, kStateEnvelopeMagic + 4);
+    out.push_back(kStateEnvelopeVersion);
+    writeU32LE(out, static_cast<uint32_t>(componentState.size()));
+    out.insert(out.end(), componentState.begin(), componentState.end());
+    writeU32LE(out, static_cast<uint32_t>(controllerState.size()));
+    out.insert(out.end(), controllerState.begin(), controllerState.end());
+    return out;
+}
+
+bool parseStateEnvelope(const uint8_t* data, size_t size,
+                        std::vector<uint8_t>& componentState,
+                        std::vector<uint8_t>& controllerState) {
+    componentState.clear();
+    controllerState.clear();
+    // Minimum envelope: 4 (magic) + 1 (version) + 4 (compLen) + 4 (ctrlLen) = 13
+    if (size < 13) return false;
+    if (std::memcmp(data, kStateEnvelopeMagic, 4) != 0) return false;
+    if (data[4] != kStateEnvelopeVersion) return false;
+
+    const uint8_t* p = data + 5;
+    uint32_t compLen = readU32LE(p);
+    p += 4;
+    // Bounds check: component bytes must fit in the buffer (including the
+    // 4-byte controller length that follows).
+    if (static_cast<size_t>(compLen) > size - 13) return false;
+    const uint8_t* compStart = p;
+    p += compLen;
+    uint32_t ctrlLen = readU32LE(p);
+    p += 4;
+    // Bounds check: controller bytes must fit exactly to the end of the buffer.
+    if (static_cast<size_t>(ctrlLen) != size - 13 - compLen) return false;
+
+    componentState.assign(compStart, compStart + compLen);
+    controllerState.assign(p, p + ctrlLen);
+    return true;
+}
+
 } // namespace nst3

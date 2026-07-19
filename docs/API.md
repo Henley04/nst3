@@ -5,6 +5,7 @@ This document is the authoritative reference for the `nvst3-host` module. It mir
 - [Module Exports](#module-exports)
 - [Host](#host)
 - [PluginInstance](#plugininstance)
+- [0.2.0 — VST3 Spec Coverage](#020--vst3-spec-coverage)
 - [Types](#types)
 - [Enums](#enums)
 - [Error Codes](#error-codes)
@@ -57,7 +58,7 @@ The Node-API version the binary was compiled against. Same value as `version().n
 
 ### Enum Objects
 
-The module exposes the following enum objects (see [Enums](#enums) for the full list of values):
+The module exposes the following enum objects (see [Enums](#enums) and [New Enums](#new-enums) for the full list of values):
 
 - `ParameterFlags`
 - `RestartFlags`
@@ -65,6 +66,14 @@ The module exposes the following enum objects (see [Enums](#enums) for the full 
 - `MediaType`
 - `MidiEventType`
 - `PluginCategory`
+- `SampleSize` *(0.2.0)*
+- `ProcessMode` *(0.2.0)*
+- `BusDirection` *(0.2.0)*
+- `KnobMode` *(0.2.0)*
+- `NoteExpressionTypeIds` *(0.2.0)*
+- `SpeakerArrangement` *(0.2.0)*
+- `ProcessContextRequirementFlags` *(0.2.0)*
+- `ChannelContextInfoFlags` *(0.2.0)*
 
 ---
 
@@ -610,6 +619,940 @@ Restore plugin state from a `Buffer`. Calls `IComponent::setState(stream)` and (
 const state = require('fs').readFileSync('state.bin');
 plugin.loadState(state);
 ```
+
+---
+
+## 0.2.0 — VST3 Spec Coverage
+
+This section documents the APIs added in 0.2.0 to bring the host to full VST3 SDK specification coverage. All additions are backward-compatible; existing callers are unaffected unless explicitly noted.
+
+### Quick Start
+
+A typical end-to-end session touches lifecycle, parameters, audio, and cleanup paths. The snippet uses the `using` keyword (Node.js ≥ 20 with explicit resource management) for automatic disposal:
+
+```js
+const { Host } = require('nvst3-host');
+
+const host = new Host({ sampleRate: 48000, maxBlockSize: 512, sampleSize: 64 });
+using plugin = host.load('/path/to/Plugin.vst3');
+
+plugin.setActive(true);
+plugin.setProcessing(true);
+
+plugin.setParameter(0, 0.5);
+plugin.addMidiEvent({ type: 1 /* NoteOn */, channel: 0, note: 60, velocity: 0.8, noteId: 42 });
+
+const inputs  = [new Float64Array(512), new Float64Array(512)];
+const outputs = [new Float64Array(512), new Float64Array(512)];
+const result = plugin.process({ inputs, outputs, numSamples: 512 });
+// result.outputSilenceFlags: number[] (per output bus)
+
+plugin.setProcessing(false);
+plugin.setActive(false);
+// [Symbol.dispose]() fires at end of scope.
+```
+
+### Host & Lifecycle
+
+The `Host` constructor and `host.load()` accept two additional fields on `HostOptions` / `LoadOptions`:
+
+| Field          | Type                                            | Default      | Description                                                                                                                       |
+|----------------|-------------------------------------------------|--------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `sampleSize`   | `32 \| 64`                                      | `32`         | Audio sample size to negotiate. `64` enables `kSample64` (double-precision) processing. The host silently falls back to `32` if `canProcessSampleSize(64)` returns false. |
+| `processMode`  | `'realtime' \| 'offline' \| 'prefetch'`         | `'realtime'` | VST3 process mode. `offline` and `prefetch` clear `Event::kIsLive` on all queued events.                                          |
+
+```ts
+interface HostOptions {
+  sampleRate?: number;
+  maxBlockSize?: number;
+  audioInputs?: number;
+  audioOutputs?: number;
+  sampleSize?: 32 | 64;                                       // NEW
+  processMode?: 'realtime' | 'offline' | 'prefetch';          // NEW
+}
+```
+
+`host.load(path, opts)` returns a `PluginInstance` (no API change; new options accepted).
+
+#### `ProcessSetupOptions`
+
+Options accepted by `plugin.setProcessSetup(opts)`. All fields are optional — only fields present are applied. The plugin must be inactive when `setProcessSetup` is invoked (throws `VST3_INVALID_PARAMETER` otherwise).
+
+```ts
+interface ProcessSetupOptions {
+  sampleRate?: number;
+  maxBlockSize?: number;
+  processMode?: 'realtime' | 'offline' | 'prefetch';
+  sampleSize?: 32 | 64;
+}
+```
+
+### PluginInstance — Lifecycle & Info
+
+#### `applyRestartFlags(flags): void`
+
+Re-query the affected SDK state for the given `RestartFlags` bitmask. The host invokes this automatically BEFORE the JS `'restart'` event fires — so users handling `'restart'` do NOT need to call this. It is exposed for the rare case where the user wants to manually trigger a re-query (e.g. after editing plugin state directly without going through the SDK).
+
+What each flag triggers:
+
+- `kLatencyChanged`            → no-op (`getLatency` always reads live).
+- `kIoChanged`                 → re-read all bus info via `IComponent::getBusCount` + `getBusInfo`, re-allocate per-bus buffers if counts changed, re-run speaker-arrangement negotiation.
+- `kMidiCCAssignmentChanged`   → no-op (`IMidiMapping` is per-call).
+- `kRoutingInfoChanged`        → no-op (`getRoutingInfo` reads live).
+- `kParamTitlesChanged`        → no-op (`getParameterInfo` reads live).
+- `kParamValuesChanged`        → no-op (`getParameter` reads live).
+- `kNoteExpressionChanged`     → no-op (`getNoteExpressionInfo` reads live).
+- `kReloadComponent`           → no-op (user must dispose and re-load).
+- `kPrefetchableSupportChanged`→ no-op (`isPrefetchable` reads live).
+- `kIoTitlesChanged`           → no-op (bus titles read live).
+
+**Parameters**:
+
+| Name    | Type     | Description                              |
+|---------|----------|------------------------------------------|
+| `flags` | `number` | Bitmask of `RestartFlags` values.        |
+
+#### `setProcessSetup(opts): void`
+
+Update the stored `ProcessSetup` fields for the next `setActive(true)` call. The VST3 spec forbids changing `ProcessSetup` while the plugin is active; callers must call `setActive(false)` first.
+
+For `sampleSize`, the host re-probes `canProcessSampleSize` with the new size; if the plugin refuses, the host silently falls back to `32` rather than throwing.
+
+**Parameters**:
+
+| Name   | Type                  | Description                          |
+|--------|-----------------------|--------------------------------------|
+| `opts` | `ProcessSetupOptions` | New setup fields (all optional).     |
+
+**Throws**:
+
+- `VST3_INVALID_PARAMETER` — if the plugin is currently active, or `opts` is not an object.
+
+### Audio Processing
+
+#### `process(block): ProcessResult | void`
+
+The return type widens from `void` to `ProcessResult | void`; existing callers that ignore the return value are unaffected. `block.numSamples === 0` is now accepted as a parameter-flush block — no audio buffer resolution is performed and the plugin's `IAudioProcessor::process` is invoked with `numSamples = 0` so pending parameter changes and events can be flushed.
+
+`ProcessBlock` gains an optional `inputSilenceFlags` field (one bitmask per input bus) and accepts both `Float32Array` and `Float64Array` channel buffers depending on the active `sampleSize`.
+
+```ts
+interface ProcessBlock {
+  inputs?:  Float32Array[] | Float32Array[][] | Float64Array[] | Float64Array[][];
+  outputs?: Float32Array[] | Float32Array[][] | Float64Array[] | Float64Array[][];
+  numSamples: number;
+  inputSilenceFlags?: number[];   // NEW — per input bus
+}
+
+interface ProcessResult {
+  outputSilenceFlags: number[];   // per output bus
+}
+```
+
+Bit `i` set in a silence flag means channel `i` of that bus is silent. Input flags propagate to `AudioBusBuffers::silenceFlags` on the SDK side; output flags report what the plugin wrote.
+
+```js
+const result = plugin.process({
+  inputs, outputs, numSamples: 512,
+  inputSilenceFlags: [0b11, 0],  // bus 0: both channels silent, bus 1: none
+});
+console.log(result.outputSilenceFlags);  // e.g. [0, 0]
+```
+
+#### `getSampleSize(): 32 | 64`
+
+Returns the active sample size for the current `setActive(true)` session. Reflects the negotiated value: if the user requested `sampleSize: 64` but `canProcessSampleSize(64)` returned false, this returns `32`.
+
+#### `canProcessSampleSize(size): boolean`
+
+Probe whether the plugin's `IAudioProcessor` supports the given sample size. Always returns `true` for `32` (VST3 spec mandates it).
+
+**Parameters**:
+
+| Name   | Type       | Description               |
+|--------|------------|---------------------------|
+| `size` | `32 \| 64` | Sample size to probe.     |
+
+#### `getTailSamples(): number`
+
+Plugin-reported tail length in samples. Returns `Number.POSITIVE_INFINITY` when the plugin reports `kInfiniteTail` (e.g. an infinite reverb). Otherwise returns the integer sample count.
+
+### Parameters
+
+#### `parseParameter(id, str): number`
+
+Parse a user-supplied string (e.g. `"440 Hz"`) into the parameter's normalized `[0,1]` value via `IEditController::getParamValueByString`.
+
+**Parameters**:
+
+| Name  | Type     | Description                |
+|-------|----------|----------------------------|
+| `id`  | `number` | Parameter ID (uint32).     |
+| `str` | `string` | String to parse.           |
+
+**Returns**: `number` — normalized value in `[0,1]`.
+
+**Throws**:
+
+- `VST3_INVALID_PARAMETER` — if the plugin refuses the string (returns `kResultFalse`).
+
+#### `plainToNormalized(id, plain): number`
+
+Convert a plain (display-unit) value to the normalized `[0,1]` value via `IEditController::plainToNormalized`.
+
+**Parameters**:
+
+| Name    | Type     | Description                          |
+|---------|----------|--------------------------------------|
+| `id`    | `number` | Parameter ID (uint32).               |
+| `plain` | `number` | Plain value (Hz, dB, %, etc.).       |
+
+**Returns**: `number` — normalized value in `[0,1]`.
+
+#### `normalizedToPlain(id, normalized): number`
+
+Convert a normalized `[0,1]` value to the plain (display-unit) value via `IEditController::normalizedToPlain`.
+
+**Parameters**:
+
+| Name         | Type     | Description                     |
+|--------------|----------|---------------------------------|
+| `id`         | `number` | Parameter ID (uint32).          |
+| `normalized` | `number` | Normalized value in `[0,1]`.    |
+
+**Returns**: `number` — plain value.
+
+### MIDI / Events
+
+The `MidiEvent` union variants `NoteOn`, `NoteOff`, and `PolyPressure` now accept an optional `noteId?: number` (default `0`) which propagates to `Event::noteOn.noteId` / `noteOff.noteId` / `polyPressure.noteId`. Subsequent `addNoteExpressionEvent({ noteId, ... })` calls target the same note instance by ID.
+
+```ts
+type MidiEvent =
+  | { type: MidiEventType.NoteOn;       channel: number; note: number; velocity: number; sampleOffset?: number; noteId?: number }
+  | { type: MidiEventType.NoteOff;      channel: number; note: number; velocity: number; sampleOffset?: number; noteId?: number }
+  | { type: MidiEventType.PolyPressure; channel: number; note: number; pressure: number; sampleOffset?: number; noteId?: number }
+  | { type: MidiEventType.Controller;      channel: number; controllerNumber: number; controllerValue: number; sampleOffset?: number }
+  | { type: MidiEventType.ProgramChange;   channel: number; programNumber: number; sampleOffset?: number }
+  | { type: MidiEventType.ChannelPressure; channel: number; pressure: number; sampleOffset?: number }
+  | { type: MidiEventType.PitchBend;       channel: number; pitchBend: number; sampleOffset?: number }
+  | { type: MidiEventType.SysEx;           sysEx: Uint8Array; sampleOffset?: number };
+```
+
+### State Persistence
+
+`saveState()` now writes a versioned `NST3` envelope when the plugin's edit controller exposes its own state. `loadState()` auto-detects the envelope format and falls back to legacy single-blob for backward compatibility with 0.1.0 state files.
+
+#### NST3 Envelope Format
+
+| Offset  | Length | Field                    | Description                                                |
+|---------|--------|--------------------------|------------------------------------------------------------|
+| `0`     | 4      | Magic                    | ASCII `"NST3"` (`0x4E 0x53 0x54 0x33`).                    |
+| `4`     | 1      | Version                  | `1`.                                                       |
+| `5`     | 4      | Component state length   | Little-endian `uint32`.                                    |
+| `9`     | N      | Component state bytes    | `IComponent::getState` blob.                               |
+| `9+N`   | 4      | Controller state length  | Little-endian `uint32` (may be `0`).                       |
+| `13+N`  | M      | Controller state bytes   | `IEditController::getState` blob (omitted when `M=0`).     |
+
+#### `saveState(): Buffer`
+
+Serialize the plugin's full state. Calls `IComponent::getState(stream)`; if the controller implements `IEditController::getState` and returns a non-empty blob, calls it as well and frames both into the versioned envelope. Plugins whose controller returns an empty blob still get the controller-state length prefix set to `0`.
+
+#### `loadState(buffer): void`
+
+Restore plugin state from a `Buffer`. The system detects the format:
+
+- If the first 4 bytes are the `NST3` magic, parse the versioned envelope and call `IComponent::setState` + `IEditController::setComponentState` + (if controller state is present) `IEditController::setState`.
+- Otherwise, treat the entire buffer as legacy component state (preserves backward compatibility with 0.1.0 state files): calls `IComponent::setState` + `IEditController::setComponentState`.
+
+```js
+const state = plugin.saveState();           // -> Buffer (NST3 envelope or legacy)
+plugin.loadState(state);                    // round-trips
+plugin.loadState(legacyBuffer);             // 0.1.0 single-blob still works
+```
+
+### Units & Programs (IUnitInfo)
+
+#### `getUnitCount(): number`
+
+Returns the number of units reported by `IUnitInfo`, or `0` if the plugin does not implement `IUnitInfo`.
+
+#### `getUnitInfo(index): UnitInfo`
+
+Returns the `UnitInfo` for the given zero-based unit **index** (NOT a unit ID — the SDK takes an index). The root unit is at index `0`.
+
+**Parameters**:
+
+| Name    | Type     | Description                |
+|---------|----------|----------------------------|
+| `index` | `number` | Zero-based unit index.     |
+
+**Returns**: [`UnitInfo`](#unitinfo)
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitInfo`.
+
+#### `getProgramListCount(): number`
+
+Returns the number of program lists reported by `IUnitInfo`, or `0` if the plugin does not implement `IUnitInfo`.
+
+#### `getProgramListInfo(listIndex): ProgramListInfo`
+
+Returns the `ProgramListInfo` for the given zero-based list index.
+
+**Parameters**:
+
+| Name        | Type     | Description                          |
+|-------------|----------|--------------------------------------|
+| `listIndex` | `number` | Zero-based program list index.       |
+
+**Returns**: [`ProgramListInfo`](#programlistinfo)
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitInfo`.
+
+#### `getProgramName(listId, programIndex): string`
+
+Returns the UTF-8 program name for the given `(listId, programIndex)`.
+
+**Parameters**:
+
+| Name           | Type     | Description                          |
+|----------------|----------|--------------------------------------|
+| `listId`       | `number` | Program-list ID.                     |
+| `programIndex` | `number` | Zero-based index within the list.    |
+
+**Returns**: `string`
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitInfo`.
+
+#### `selectProgram(unitId, programIndex): void`
+
+Selects a program: calls `IUnitInfo::selectUnit(unitId)` followed by `IUnitInfo::selectProgram(unitId, programIndex)`. The plugin updates its parameters to the selected program.
+
+**Parameters**:
+
+| Name           | Type     | Description                          |
+|----------------|----------|--------------------------------------|
+| `unitId`       | `number` | Unit ID to select.                   |
+| `programIndex` | `number` | Zero-based program index.            |
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitInfo`.
+
+#### `getCurrentUnit(): number`
+
+Returns the currently selected unit ID, or `0` if the plugin does not implement `IUnitInfo`.
+
+#### `getUnitByBusInfo(bus): number | null`
+
+Resolves the unit ID for a specific `(mediaType, direction, busIndex)` tuple via `IUnitInfo::getUnitByBusInfo`. Returns `null` if the plugin does not implement `IUnitInfo` or the bus is not associated with a unit.
+
+**Parameters**:
+
+| Name  | Type     | Description                                       |
+|-------|----------|---------------------------------------------------|
+| `bus` | `BusRef` | `{ mediaType, direction, busIndex }` tuple.       |
+
+**Returns**: `number | null`
+
+### Program & Unit Bulk Data (IProgramListData / IUnitData)
+
+#### `getProgramData(listId, programIndex): Buffer`
+
+Reads per-program bulk data via `IProgramListData::getProgramData` and returns it as a `Buffer`.
+
+**Parameters**:
+
+| Name           | Type     | Description                          |
+|----------------|----------|--------------------------------------|
+| `listId`       | `number` | Program-list ID.                     |
+| `programIndex` | `number` | Zero-based program index.            |
+
+**Returns**: `Buffer`
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IProgramListData`.
+
+#### `setProgramData(listId, programIndex, buffer): void`
+
+Writes per-program bulk data via `IProgramListData::setProgramData`.
+
+**Parameters**:
+
+| Name           | Type     | Description                    |
+|----------------|----------|--------------------------------|
+| `listId`       | `number` | Program-list ID.               |
+| `programIndex` | `number` | Zero-based program index.      |
+| `buffer`       | `Buffer` | Bulk data to write.            |
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IProgramListData`.
+
+#### `getUnitData(unitId): Buffer`
+
+Reads per-unit bulk data via `IUnitData::getUnitData` and returns it as a `Buffer`.
+
+**Parameters**:
+
+| Name     | Type     | Description       |
+|----------|----------|-------------------|
+| `unitId` | `number` | Unit ID.          |
+
+**Returns**: `Buffer`
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitData`.
+
+#### `setUnitData(unitId, buffer): void`
+
+Writes per-unit bulk data via `IUnitData::setUnitData`.
+
+**Parameters**:
+
+| Name     | Type     | Description             |
+|----------|----------|-------------------------|
+| `unitId` | `number` | Unit ID.                |
+| `buffer` | `Buffer` | Bulk data to write.     |
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IUnitData`.
+
+### Note Expression (INoteExpressionController)
+
+#### `getNoteExpressionCount(busIndex, channel): number`
+
+Returns the number of note-expression types for a given `(busIndex, channel)`, or `0` if the plugin does not implement `INoteExpressionController`.
+
+#### `getNoteExpressionInfo(busIndex, channel, index): NoteExpressionInfo`
+
+Returns the `NoteExpressionInfo` for the given `(busIndex, channel, index)` tuple.
+
+**Parameters**:
+
+| Name       | Type     | Description                            |
+|------------|----------|----------------------------------------|
+| `busIndex` | `number` | Zero-based event input bus index.      |
+| `channel`  | `number` | Zero-based channel within the bus.     |
+| `index`    | `number` | Zero-based expression-type index.      |
+
+**Returns**: [`NoteExpressionInfo`](#noteexpressioninfo)
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `INoteExpressionController`.
+
+#### `addNoteExpressionEvent(event): void`
+
+Queues a `kNoteExpressionValueEvent` for the next `process()` call. The `noteId` must match a previously-queued noteOn so the plugin can route the expression to the right note instance.
+
+**Parameters**:
+
+| Name    | Type                  | Description                                          |
+|---------|-----------------------|------------------------------------------------------|
+| `event` | `NoteExpressionEvent` | `{ noteId, typeId, value, sampleOffset? }`.          |
+
+```js
+plugin.addMidiEvent({ type: 1, channel: 0, note: 60, velocity: 0.9, noteId: 42 });
+plugin.addNoteExpressionEvent({ noteId: 42, typeId: 0 /* Volume */, value: 0.5 });
+```
+
+### Keyswitches (IKeyswitchController)
+
+#### `getKeyswitchCount(busIndex, channel): number`
+
+Returns the number of static keyswitches for a given `(busIndex, channel)`, or `0` if the plugin does not implement `IKeyswitchController`.
+
+#### `getKeyswitchInfo(busIndex, channel, index): KeyswitchInfo`
+
+Returns the `KeyswitchInfo` for the given `(busIndex, channel, index)` tuple.
+
+**Parameters**:
+
+| Name       | Type     | Description                            |
+|------------|----------|----------------------------------------|
+| `busIndex` | `number` | Zero-based event input bus index.      |
+| `channel`  | `number` | Zero-based channel within the bus.     |
+| `index`    | `number` | Zero-based keyswitch index.            |
+
+**Returns**: [`KeyswitchInfo`](#keyswitchinfo)
+
+**Throws**:
+
+- `VST3_UNKNOWN` — if the plugin does not implement `IKeyswitchController`.
+
+### Runtime Bus Management
+
+#### `getBusList(mediaType, direction): BusInfo[]`
+
+Returns one `BusInfo` entry per bus of the requested `(mediaType, direction)` tuple. Iterates `IComponent::getBusCount` and calls `getBusInfo` for each.
+
+**Parameters**:
+
+| Name        | Type     | Description                                              |
+|-------------|----------|----------------------------------------------------------|
+| `mediaType` | `number` | One of `MediaType` (`Audio=0`, `Event=1`).               |
+| `direction` | `number` | One of `BusDirection` (`Input=0`, `Output=1`).           |
+
+**Returns**: [`BusInfo[]`](#businfo)
+
+#### `getBusInfo(mediaType, direction, busIndex): BusInfo`
+
+Returns the `BusInfo` for a single bus. The `active` field reflects cached `inputBusInfos_` / `outputBusInfos_` state (for audio buses) and `speakerArrangement` is queried from `IAudioProcessor::getBusArrangement`.
+
+**Parameters**:
+
+| Name        | Type     | Description                                              |
+|-------------|----------|----------------------------------------------------------|
+| `mediaType` | `number` | One of `MediaType`.                                      |
+| `direction` | `number` | One of `BusDirection`.                                   |
+| `busIndex`  | `number` | Zero-based bus index within `(mediaType, direction)`.    |
+
+**Returns**: [`BusInfo`](#businfo)
+
+#### `activateBus(mediaType, direction, busIndex, active): void`
+
+Activates or deactivates a single bus via `IComponent::activateBus`. Must be called while `setActive(false)`.
+
+**Parameters**:
+
+| Name        | Type      | Description                                              |
+|-------------|-----------|----------------------------------------------------------|
+| `mediaType` | `number`  | One of `MediaType`.                                      |
+| `direction` | `number`  | One of `BusDirection`.                                   |
+| `busIndex`  | `number`  | Zero-based bus index within `(mediaType, direction)`.    |
+| `active`    | `boolean` | `true` to activate, `false` to deactivate.               |
+
+**Throws**:
+
+- `VST3_INVALID_PARAMETER` — if `setActive(true)` is currently active.
+
+### Speaker Arrangement
+
+#### `setBusArrangement(inputs, outputs): boolean`
+
+Negotiates a new speaker-arrangement layout for inputs and outputs via `IAudioProcessor::setBusArrangements`. Returns `true` on success (the plugin accepted the layout) or `false` on `kResultFalse` (the previous arrangement is unchanged). On success, cached bus info is refreshed.
+
+Both arrays must contain one entry per declared input/output bus.
+
+**Parameters**:
+
+| Name      | Type       | Description                                            |
+|-----------|------------|--------------------------------------------------------|
+| `inputs`  | `number[]` | One `SpeakerArrangement` value per input bus.          |
+| `outputs` | `number[]` | One `SpeakerArrangement` value per output bus.         |
+
+**Returns**: `boolean`
+
+#### `getBusArrangement(direction, busIndex): number`
+
+Returns the current `SpeakerArrangement` for the given `(direction, busIndex)` audio bus.
+
+**Parameters**:
+
+| Name        | Type     | Description                          |
+|-------------|----------|--------------------------------------|
+| `direction` | `number` | One of `BusDirection`.               |
+| `busIndex`  | `number` | Zero-based bus index.                |
+
+**Returns**: `number` — one of `SpeakerArrangement`.
+
+### Routing
+
+#### `getRoutingInfo(srcBus, dstBus): RoutingInfo | null`
+
+Queries `IComponent::getRoutingInfo(srcBus, dstBus)` to determine how an input bus routes to an output bus in multi-bus plugins. Returns `null` if the plugin returns `kResultFalse` for the query.
+
+**Parameters**:
+
+| Name      | Type     | Description                       |
+|-----------|----------|-----------------------------------|
+| `srcBus`  | `number` | Source (input) bus index.         |
+| `dstBus`  | `number` | Destination (output) bus index.   |
+
+**Returns**: [`RoutingInfo`](#routinginfo) `| null`
+
+### Process Context
+
+#### `setProcessContext(opts): void`
+
+Update the persistent `ProcessContext` from user-supplied fields. Each present field is written into the context, and the corresponding state validity bit is set (or, for the boolean transport fields, toggled on/off). Fields not present are left at their current value.
+
+Changes take effect on the next `process()` call. The host keeps the context across blocks: tempo, time signature, and transport flags are sticky; transport positions advance per-block when `playing` is set.
+
+**Parameters**:
+
+| Name   | Type                    | Description                          |
+|--------|-------------------------|--------------------------------------|
+| `opts` | `ProcessContextOptions` | Context fields to apply (optional).  |
+
+**Throws**:
+
+- `VST3_INVALID_PARAMETER` — if `opts` is not an object.
+
+```js
+plugin.setProcessContext({
+  tempo: 140,
+  timeSigNumerator: 6,
+  timeSigDenominator: 8,
+  playing: true,
+});
+```
+
+#### `getProcessContext(): ProcessContextSnapshot`
+
+Returns a snapshot of the current `ProcessContext` as a JS object. Includes all configurable fields plus the raw `state` bitmask so callers can inspect which fields are currently flagged valid.
+
+**Returns**: `ProcessContextSnapshot`
+
+#### `getProcessContextRequirements(): number`
+
+Returns the bitmask from `IProcessContextRequirements::getProcessContextRequirements()` so the user can see which `ProcessContext` fields the plugin actually consumes. Returns `0` if the plugin does not implement the interface. The mask is a logical OR of `ProcessContextRequirementFlags`. When implemented, the host uses it to skip recomputation of unneeded fields each block.
+
+**Returns**: `number` — bitmask of `ProcessContextRequirementFlags`.
+
+### Information Interfaces
+
+#### `setAudioPresentationLatency(busIndex, latencySamples): boolean`
+
+Notifies the plugin of the output-presentation latency for a given bus via `IAudioPresentationLatencySamples::setAudioPresentationLatencySamples`. Plugins use this for monitoring-side plugin delay compensation.
+
+**Parameters**:
+
+| Name             | Type     | Description                          |
+|------------------|----------|--------------------------------------|
+| `busIndex`       | `number` | Zero-based output bus index.         |
+| `latencySamples` | `number` | Latency in samples.                  |
+
+**Returns**: `boolean` — `true` if the plugin implements the interface and accepted the value; `false` if the plugin does not implement the interface.
+
+#### `setChannelContextInfo(info): boolean`
+
+Builds an `IAttributeList` from the supplied `info` object and passes it to `IInfoListener::informListener` so the plugin can update its notion of which track / channel it is loaded on. The plugin may use the channel name, color, and namespace for display purposes.
+
+**Parameters**:
+
+| Name   | Type                 | Description                                |
+|--------|----------------------|--------------------------------------------|
+| `info` | `ChannelContextInfo` | Channel-context fields (all optional).     |
+
+**Returns**: `boolean` — `true` if the plugin implements `IInfoListener` and accepted the list; `false` otherwise.
+
+#### `isPrefetchable(): boolean`
+
+Returns `true` if the plugin implements `IPrefetchableSupport` and reports itself as prefetchable via `isPrefetchable()`. Returns `false` when the plugin doesn't implement the interface (the conservative default — assume not prefetchable).
+
+#### `setKnobMode(mode): boolean`
+
+Forward the host's preferred knob interaction mode to the plugin's `IEditController2::setKnobMode`. The mode is one of the `KnobMode` enum values.
+
+**Parameters**:
+
+| Name   | Type     | Description                                                |
+|--------|----------|------------------------------------------------------------|
+| `mode` | `number` | One of `KnobMode` (0=circular, 1=relative circular, 2=linear). |
+
+**Returns**: `boolean` — `true` if the plugin implements `IEditController2` and accepted the mode; `false` if the plugin does not implement the interface (no-op).
+
+### Events
+
+`plugin.on(event, listener)` now supports six plugin→host event names. The listener is invoked asynchronously on the JavaScript thread via a `Napi::ThreadSafeFunction` — it is safe to call any `PluginInstance` method from inside it.
+
+| Event            | Listener Signature          | Description                                                                                                                       |
+|------------------|-----------------------------|-----------------------------------------------------------------------------------------------------------------------------------|
+| `'restart'`      | `(flags: number) => void`   | Plugin requests a restart; `flags` is a bitmask of `RestartFlags`. The host has already auto-reacted by the time the listener runs. |
+| `'dirty'`        | `(dirty: boolean) => void`  | Plugin signals dirty state via `IComponentHandler2::setDirtyState`.                                                              |
+| `'beginGesture'` | `(paramId: number) => void` | Plugin began a parameter-edit gesture via `IComponentHandler::beginEdit`.                                                        |
+| `'endGesture'`   | `(paramId: number) => void` | Plugin ended a parameter-edit gesture via `IComponentHandler::endEdit`.                                                          |
+| `'startGroup'`   | `() => void`                | Plugin started a group of related parameter edits via `IComponentHandler2::startGroupExecution`.                                 |
+| `'finishGroup'`  | `() => void`                | Plugin finished a group of related parameter edits via `IComponentHandler2::finishGroupExecution`.                               |
+
+```js
+plugin.on('dirty',        (dirty) => console.log('Plugin dirty:', dirty));
+plugin.on('beginGesture', (id)    => console.log('Begin gesture on param', id));
+plugin.on('endGesture',   (id)    => console.log('End gesture on param', id));
+```
+
+Note: `IEditController2::openHelp` and `openAboutBox` are host→plugin method calls (the host invokes them on the plugin's controller), not plugin→host events. They are intentionally not exposed via `on()` — the host does not have a use case for invoking them programmatically without a GUI.
+
+### New Types
+
+#### `UnitInfo`
+
+```ts
+interface UnitInfo {
+  id: number;            // Unit ID.
+  name: string;          // Human-readable unit name (UTF-8).
+  programListId: number; // Associated program-list ID, or -1 if none.
+  parentUnitId: number;  // Parent unit ID, or -1 for the root unit.
+  type: number;          // 0 = simple unit, 1 = hard-clipboard-group, etc.
+}
+```
+
+A single unit reported by the plugin's `IUnitInfo`. The root unit has `parentUnitId = -1` (kNoParentUnitId) and `programListId = -1` when the unit has no associated program list.
+
+#### `ProgramListInfo`
+
+```ts
+interface ProgramListInfo {
+  id: number;            // Program-list ID.
+  name: string;          // Human-readable program-list name (UTF-8).
+  programCount: number;  // Number of programs in this list.
+}
+```
+
+Metadata for a single program list exposed by `IUnitInfo`.
+
+#### `BusRef`
+
+```ts
+interface BusRef {
+  mediaType: number;  // One of MediaType (Audio=0, Event=1).
+  direction: number;  // One of BusDirection (Input=0, Output=1).
+  busIndex: number;   // Zero-based bus index within (mediaType, direction).
+}
+```
+
+Reference to a specific `(mediaType, direction, busIndex)` tuple. Used by `getUnitByBusInfo`.
+
+#### `NoteExpressionInfo`
+
+```ts
+interface NoteExpressionInfo {
+  typeId: number;                // Note-expression type ID (see NoteExpressionTypeIds).
+  title: string;                 // Human-readable title (UTF-8).
+  shortTitle: string;            // Short title for compact UIs (UTF-8).
+  unitId: number;                // Associated unit ID (0 = no unit).
+  associatedParameterId: number; // Associated parameter ID, or -1 (kNoParamId).
+  flags: number;                 // Bitmask of NoteExpressionValueFlags (kIsAbsolute, kIsLive).
+}
+```
+
+One note-expression type exposed by the plugin's `INoteExpressionController`. The `typeId` matches one of the `NoteExpressionTypeIds` values or a plugin-defined custom type.
+
+#### `NoteExpressionEvent`
+
+```ts
+interface NoteExpressionEvent {
+  noteId: number;        // Target note ID (set on a prior noteOn event).
+  typeId: number;        // Note-expression type ID (see NoteExpressionTypeIds).
+  value: number;         // Normalized value in [0, 1] (or [-1, 1] for bipolar types).
+  sampleOffset?: number; // Sample offset within the next process() block (default 0).
+}
+```
+
+A single queued note-expression event targeting a specific `noteId`.
+
+#### `KeyswitchInfo`
+
+```ts
+interface KeyswitchInfo {
+  key: number;           // MIDI key number (e.g. 60 = C4).
+  name: string;          // Human-readable keyswitch name (UTF-8).
+  keyswitchType: number; // kKeySwitchOnOff=0, kKeySwitchOnOnly=1, etc.
+}
+```
+
+A single static keyswitch exposed by the plugin's `IKeyswitchController`.
+
+#### `BusInfo`
+
+```ts
+interface BusInfo {
+  mediaType: number;          // One of MediaType (Audio=0, Event=1).
+  direction: number;          // One of BusDirection (Input=0, Output=1).
+  busIndex: number;           // Zero-based bus index within (mediaType, direction).
+  name: string;               // Human-readable bus name (UTF-8).
+  channelCount: number;       // Number of channels in this bus (1=mono, 2=stereo, etc.).
+  busType: number;            // One of BusType (Main=0, Aux=1).
+  flags: number;              // Bitmask of BusInfo flags (kDefaultActive=1, kIsControlVoltage=2).
+  active: boolean;            // Whether the bus is currently active (reflects activateBus calls).
+  speakerArrangement: number; // Current SpeakerArrangement (audio buses only; event buses report 0).
+}
+```
+
+Information for a single bus reported by `IComponent::getBusInfo`.
+
+#### `RoutingInfo`
+
+```ts
+interface RoutingInfo {
+  srcBus: number;        // Source bus index (echoes the requested srcBus).
+  dstBus: number;        // Destination bus index reported by the plugin.
+  busMediaType: number;  // Destination bus media type (0 = audio, 1 = event).
+  busType: number;       // Destination bus type (0 = main, 1 = aux).
+}
+```
+
+Result of `getRoutingInfo`. Returns `null` when the plugin's `IComponent::getRoutingInfo` returns `kResultFalse`.
+
+#### `ProcessContextOptions`
+
+```ts
+interface ProcessContextOptions {
+  tempo?: number;                  // BPM. Sets kTempoValid (and kProjectTimeMusicValid).
+  timeSigNumerator?: number;       // Default 4. Sets kTimeSigValid.
+  timeSigDenominator?: number;     // Default 4. Sets kTimeSigValid.
+  samplePosition?: number;         // Project time in samples (int64).
+  barPositionMusic?: number;       // Bar position in musical time (double). Sets kBarPositionValid.
+  samplesToNextClock?: number;     // Samples to next MIDI clock tick (int32, 24 PPQ).
+  playing?: boolean;               // Toggles kPlaying bit.
+  cycleActive?: boolean;           // Toggles kCycleActive bit.
+  recording?: boolean;             // Toggles kRecording bit.
+  systemTime?: number;             // Nanoseconds since epoch (int64). Sets kSystemTimeValid.
+  continuousTimeSamples?: number;  // Continuous time in samples (int64). Sets kContinousTimeValid.
+}
+```
+
+Options accepted by `setProcessContext(opts)`. All fields are optional. Supplying a value field also OR's the corresponding validity bit into `ProcessContext.state`. Boolean fields toggle the corresponding transport state bit on or off.
+
+> Note: the SDK spells the continuous-time field `continousTimeSamples` (one 'u'); the TS surface mirrors that spelling.
+
+#### `ProcessContextSnapshot`
+
+Extends `ProcessContextOptions` with boolean views of the transport bits and the raw `state` bitmask:
+
+```ts
+interface ProcessContextSnapshot extends ProcessContextOptions {
+  playing: boolean;
+  cycleActive: boolean;
+  recording: boolean;
+  state: number;  // Raw ProcessContext.state bitmask.
+}
+```
+
+Snapshot returned by `getProcessContext()`.
+
+#### `ChannelContextInfo`
+
+```ts
+interface ChannelContextInfo {
+  channelIdx?: number;          // Zero-based channel index within its bus (int32).
+  pluginName?: string;          // Plugin display name (String128).
+  trackName?: string;           // Track / channel name (String128).
+  namespaceName?: string;       // Channel namespace, e.g. bus or group name (String128).
+  channelColor?: number;        // Packed 32-bit ARGB value (uint32).
+  channelColorLength?: number;  // Color length / format hint (int32).
+}
+```
+
+Channel-context info accepted by `setChannelContextInfo(info)`. The host builds an `IAttributeList` from these fields and passes it to the plugin's `IInfoListener::informListener`. All fields are optional; only present fields are forwarded.
+
+### New Enums
+
+#### `SampleSize`
+
+Symbolic sample sizes (mirrors `Steinberg::Vst::SymbolicSampleSizes`).
+
+| Name       | Value |
+|------------|-------|
+| `Sample32` | `32`  |
+| `Sample64` | `64`  |
+
+#### `ProcessMode`
+
+VST3 process modes (mirrors `Steinberg::Vst::ProcessMode`).
+
+| Name       | Value |
+|------------|-------|
+| `Realtime` | `0`   |
+| `Offline`  | `1`   |
+| `Prefetch` | `2`   |
+
+#### `BusDirection`
+
+VST3 bus directions (mirrors `Steinberg::Vst::BusDirection`).
+
+| Name     | Value |
+|----------|-------|
+| `Input`  | `0`   |
+| `Output` | `1`   |
+
+#### `KnobMode`
+
+VST3 knob modes (mirrors `Steinberg::Vst::IEditController2::KnobMode`). Pass one of these to `setKnobMode(mode)` to forward the host's preferred knob interaction mode.
+
+| Name               | Value |
+|--------------------|-------|
+| `Circular`         | `0`   |
+| `RelativeCircular` | `1`   |
+| `Linear`           | `2`   |
+
+#### `NoteExpressionTypeIds`
+
+Note-expression type IDs (mirrors `Steinberg::Vst::NoteExpressionTypeIDs`). Built-in type IDs exposed by `INoteExpressionController`; plugins may also define custom type IDs above `kPitchTypeID`.
+
+| Name               | Value |
+|--------------------|-------|
+| `Volume`           | `0`   |
+| `Pan`              | `1`   |
+| `Tuning`           | `2`   |
+| `Brightness`       | `3`   |
+| `Vibrato`          | `4`   |
+| `Expression`       | `5`   |
+| `SoundPressure`    | `6`   |
+| `SoundPowerOctave` | `7`   |
+| `Pitch`            | `8`   |
+
+#### `SpeakerArrangement`
+
+VST3 speaker arrangements (mirrors `Steinberg::Vst::SpeakerArr` constants). Pass these to `setBusArrangement()` and read them from `getBusArrangement()` / `BusInfo.speakerArrangement`.
+
+| Name        | Value |
+|-------------|-------|
+| `Mono`      | `0`   |
+| `Stereo`    | `1`   |
+| `_30Stereo` | `2`   |
+| `_31Cine`   | `3`   |
+| `_40Cine`   | `4`   |
+| `_50`       | `5`   |
+| `_51`       | `6`   |
+| `_60Cine`   | `7`   |
+| `_61Cine`   | `8`   |
+| `_70Cine`   | `9`   |
+| `_71Cine`   | `10`  |
+| `_71_2`     | `11`  |
+| `_71_4`     | `12`  |
+
+#### `ProcessContextRequirementFlags`
+
+VST3 process-context requirement flags (mirrors `Steinberg::Vst::IProcessContextRequirements::ProcessContextRequirementFlags`). Returned by `getProcessContextRequirements()` as a bitmask so the host can decide which `ProcessContext` fields to recompute each block.
+
+| Name                     | Value       |
+|--------------------------|-------------|
+| `NeedTempo`              | `1 << 0` (`1`)    |
+| `NeedBars`               | `1 << 1` (`2`)    |
+| `NeedCyclePos`           | `1 << 2` (`4`)    |
+| `NeedTimeSignature`      | `1 << 3` (`8`)    |
+| `NeedSamplesToNextClock` | `1 << 4` (`16`)   |
+| `NeedSystemTime`         | `1 << 5` (`32`)   |
+| `NeedContinousTime`      | `1 << 6` (`64`)   |
+| `NeedFrameRate`          | `1 << 7` (`128`)  |
+| `NeedTransportState`     | `1 << 8` (`256`)  |
+
+#### `ChannelContextInfoFlags`
+
+Bitmask flags describing which `ChannelContextInfo` fields are present (mirrors `Steinberg::Vst::ChannelContextInfo::ChannelContextInfoFlags`).
+
+| Name                          | Value       |
+|-------------------------------|-------------|
+| `ContainsPluginName`          | `1 << 0` (`1`)    |
+| `ContainsTrackName`           | `1 << 1` (`2`)    |
+| `ContainsTrackColor`          | `1 << 2` (`4`)    |
+| `ContainsTrackNamespace`      | `1 << 3` (`8`)    |
+| `ContainsTrackNamespaceColor` | `1 << 4` (`16`)   |
+
+### Error Codes
+
+No new error codes were added in 0.2.0. All new methods throw one of the existing 14 `VST3_*` codes (see [Error Codes](#error-codes)); the most common are `VST3_INVALID_PARAMETER` (bad argument or wrong state) and `VST3_UNKNOWN` (plugin does not implement the queried SDK interface).
 
 ---
 

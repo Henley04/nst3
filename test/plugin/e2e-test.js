@@ -32,14 +32,14 @@ check('info.version === "1.0.0"', info.version === '1.0.0', info.version);
 check('info.subCategories === "Fx"', info.subCategories === 'Fx', info.subCategories);
 check('info.numAudioInputs === 2', info.numAudioInputs === 2, info.numAudioInputs);
 check('info.numAudioOutputs === 2', info.numAudioOutputs === 2, info.numAudioOutputs);
-check('info.parameterCount === 1', info.parameterCount === 1, info.parameterCount);
+check('info.parameterCount === 2', info.parameterCount === 2, info.parameterCount);
 check('info.hasController === true', info.hasController === true, info.hasController);
 check('info.isSingleComponent === true', info.isSingleComponent === true, info.isSingleComponent);
 
 // === Step 2: Parameter info ===
 console.log('\n[2] Parameter info');
 const paramCount = p1.getParameterCount();
-check('getParameterCount() === 1', paramCount === 1, paramCount);
+check('getParameterCount() === 2', paramCount === 2, paramCount);
 const pinfo = p1.getParameterInfo(0);
 check('paramInfo.title === "Gain"', pinfo.title === 'Gain', pinfo.title);
 check('paramInfo.id === 0', pinfo.id === 0, pinfo.id);

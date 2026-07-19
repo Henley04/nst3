@@ -47,11 +47,22 @@ Host::Host(const Napi::CallbackInfo& info) : Napi::ObjectWrap<Host>(info) {
         if (o.Has("audioOutputs") && o.Get("audioOutputs").IsNumber()) {
             opts.audioOutputs = o.Get("audioOutputs").As<Napi::Number>().Int32Value();
         }
+        if (o.Has("sampleSize") && o.Get("sampleSize").IsNumber()) {
+            opts.sampleSize = o.Get("sampleSize").As<Napi::Number>().Int32Value();
+        }
+        if (o.Has("processMode") && o.Get("processMode").IsString()) {
+            std::string pm = o.Get("processMode").As<Napi::String>().Utf8Value();
+            if (pm == "offline") opts.processMode = 1;
+            else if (pm == "prefetch") opts.processMode = 2;
+            else opts.processMode = 0; // "realtime" or anything else
+        }
     }
     if (opts.sampleRate <= 0) opts.sampleRate = 48000.0;
     if (opts.maxBlockSize <= 0) opts.maxBlockSize = 512;
     if (opts.audioInputs < 0) opts.audioInputs = 2;
     if (opts.audioOutputs < 0) opts.audioOutputs = 2;
+    if (opts.sampleSize != 32 && opts.sampleSize != 64) opts.sampleSize = 32;
+    if (opts.processMode < 0 || opts.processMode > 2) opts.processMode = 0;
     options_ = opts;
 
     hostApp_ = std::make_unique<NstHostApplication>();
@@ -84,7 +95,18 @@ Napi::Value Host::Load(const Napi::CallbackInfo& info) {
         if (o.Has("audioOutputs") && o.Get("audioOutputs").IsNumber()) {
             loadOpts.audioOutputs = o.Get("audioOutputs").As<Napi::Number>().Int32Value();
         }
+        if (o.Has("sampleSize") && o.Get("sampleSize").IsNumber()) {
+            loadOpts.sampleSize = o.Get("sampleSize").As<Napi::Number>().Int32Value();
+        }
+        if (o.Has("processMode") && o.Get("processMode").IsString()) {
+            std::string pm = o.Get("processMode").As<Napi::String>().Utf8Value();
+            if (pm == "offline") loadOpts.processMode = 1;
+            else if (pm == "prefetch") loadOpts.processMode = 2;
+            else loadOpts.processMode = 0;
+        }
     }
+    if (loadOpts.sampleSize != 32 && loadOpts.sampleSize != 64) loadOpts.sampleSize = 32;
+    if (loadOpts.processMode < 0 || loadOpts.processMode > 2) loadOpts.processMode = 0;
 
     return translateExceptions(env, [&]() -> Napi::Value {
         auto instance = PluginInstance::Create(env, path, loadOpts, hostApp_.get());
@@ -99,6 +121,8 @@ Napi::Value Host::GetOptions(const Napi::CallbackInfo& info) {
     o.Set("maxBlockSize", Napi::Number::New(env, options_.maxBlockSize));
     o.Set("audioInputs", Napi::Number::New(env, options_.audioInputs));
     o.Set("audioOutputs", Napi::Number::New(env, options_.audioOutputs));
+    o.Set("sampleSize", Napi::Number::New(env, options_.sampleSize));
+    o.Set("processMode", Napi::Number::New(env, options_.processMode));
     return o;
 }
 
