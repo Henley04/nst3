@@ -15,15 +15,20 @@ namespace nst3 {
 
 namespace {
 
-void zeroEvent(Steinberg::Vst::Event& e) {
+void zeroEvent(Steinberg::Vst::Event& e, bool isLive = true) {
     std::memset(&e, 0, sizeof(e));
-    e.flags = Steinberg::Vst::Event::kIsLive;
+    if (isLive) {
+        e.flags = Steinberg::Vst::Event::kIsLive;
+    } else {
+        e.flags = 0;
+    }
 }
 
 } // namespace
 
 bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffset,
-                      Steinberg::Vst::Event& outEvent) {
+                      Steinberg::Vst::Event& outEvent,
+                      bool isLive, int32_t noteId) {
     if (!bytes || numBytes == 0) return false;
     uint8_t status = bytes[0];
     if (status < 0x80) return false; // not a status byte
@@ -34,37 +39,40 @@ bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffse
     switch (hi) {
         case 0x80: { // Note Off
             if (numBytes < 3) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kNoteOffEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.noteOff.channel = static_cast<int16_t>(channel);
             outEvent.noteOff.pitch = static_cast<int16_t>(bytes[1] & 0x7F);
             outEvent.noteOff.velocity = static_cast<float>(bytes[2] & 0x7F) / 127.f;
+            outEvent.noteOff.noteId = noteId;
             return true;
         }
         case 0x90: { // Note On
             if (numBytes < 3) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kNoteOnEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.noteOn.channel = static_cast<int16_t>(channel);
             outEvent.noteOn.pitch = static_cast<int16_t>(bytes[1] & 0x7F);
             outEvent.noteOn.velocity = static_cast<float>(bytes[2] & 0x7F) / 127.f;
+            outEvent.noteOn.noteId = noteId;
             return true;
         }
         case 0xA0: { // Poly Aftertouch
             if (numBytes < 3) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kPolyPressureEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.polyPressure.channel = static_cast<int16_t>(channel);
             outEvent.polyPressure.pitch = static_cast<int16_t>(bytes[1] & 0x7F);
             outEvent.polyPressure.pressure = static_cast<float>(bytes[2] & 0x7F) / 127.f;
+            outEvent.polyPressure.noteId = noteId;
             return true;
         }
         case 0xB0: { // Controller
             if (numBytes < 3) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel);
@@ -75,7 +83,7 @@ bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffse
         }
         case 0xC0: { // Program Change
             if (numBytes < 2) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel);
@@ -86,7 +94,7 @@ bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffse
         }
         case 0xD0: { // Channel Pressure
             if (numBytes < 2) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel);
@@ -97,7 +105,7 @@ bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffse
         }
         case 0xE0: { // Pitch Bend
             if (numBytes < 3) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel);
@@ -114,7 +122,7 @@ bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffse
                 if (bytes[i] == 0xF7) { end = i; break; }
             }
             size_t sysexLen = (end > 1) ? (end - 1) : 0;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kDataEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.data.bytes = const_cast<uint8_t*>(bytes + 1);
@@ -132,35 +140,39 @@ bool structuredMidiToEvent(int type, int channel, int note, int velocity,
                            int programNumber, int pressure, int pitchBend,
                            const uint8_t* sysExData, size_t sysExSize,
                            int32_t sampleOffset,
-                           Steinberg::Vst::Event& outEvent) {
+                           Steinberg::Vst::Event& outEvent,
+                           bool isLive, int32_t noteId) {
     auto t = static_cast<MidiEventType>(type);
     switch (t) {
         case MidiEventType::NoteOff:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kNoteOffEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.noteOff.channel = static_cast<int16_t>(channel & 0x0F);
             outEvent.noteOff.pitch = static_cast<int16_t>(note & 0x7F);
             outEvent.noteOff.velocity = static_cast<float>(velocity & 0x7F) / 127.f;
+            outEvent.noteOff.noteId = noteId;
             return true;
         case MidiEventType::NoteOn:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kNoteOnEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.noteOn.channel = static_cast<int16_t>(channel & 0x0F);
             outEvent.noteOn.pitch = static_cast<int16_t>(note & 0x7F);
             outEvent.noteOn.velocity = static_cast<float>(velocity & 0x7F) / 127.f;
+            outEvent.noteOn.noteId = noteId;
             return true;
         case MidiEventType::PolyPressure:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kPolyPressureEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.polyPressure.channel = static_cast<int16_t>(channel & 0x0F);
             outEvent.polyPressure.pitch = static_cast<int16_t>(note & 0x7F);
             outEvent.polyPressure.pressure = static_cast<float>(pressure & 0x7F) / 127.f;
+            outEvent.polyPressure.noteId = noteId;
             return true;
         case MidiEventType::Controller:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel & 0x0F);
@@ -169,7 +181,7 @@ bool structuredMidiToEvent(int type, int channel, int note, int velocity,
             outEvent.midiCCOut.value2 = 0;
             return true;
         case MidiEventType::ProgramChange:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel & 0x0F);
@@ -178,7 +190,7 @@ bool structuredMidiToEvent(int type, int channel, int note, int velocity,
             outEvent.midiCCOut.value2 = 0;
             return true;
         case MidiEventType::ChannelPressure:
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel & 0x0F);
@@ -191,7 +203,7 @@ bool structuredMidiToEvent(int type, int channel, int note, int velocity,
             int32_t pb = pitchBend + 8192;
             uint8_t lsb = static_cast<uint8_t>(pb & 0x7F);
             uint8_t msb = static_cast<uint8_t>((pb >> 7) & 0x7F);
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kLegacyMIDICCOutEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.midiCCOut.channel = static_cast<int8_t>(channel & 0x0F);
@@ -202,7 +214,7 @@ bool structuredMidiToEvent(int type, int channel, int note, int velocity,
         }
         case MidiEventType::SysEx: {
             if (!sysExData || sysExSize == 0) return false;
-            zeroEvent(outEvent);
+            zeroEvent(outEvent, isLive);
             outEvent.type = Steinberg::Vst::Event::kDataEvent;
             outEvent.sampleOffset = sampleOffset;
             outEvent.data.bytes = const_cast<uint8_t*>(sysExData);

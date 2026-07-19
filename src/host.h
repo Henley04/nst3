@@ -20,6 +20,13 @@ struct HostOptions {
     int32_t maxBlockSize = 512;
     int32_t audioInputs = 2;
     int32_t audioOutputs = 2;
+    // Sample size: 32 (kSample32, default) or 64 (kSample64). If the user
+    // requests 64 but the plugin refuses via canProcessSampleSize, the host
+    // silently falls back to 32.
+    int32_t sampleSize = 32;
+    // Process mode: 0 = realtime (default), 1 = offline, 2 = prefetch.
+    // Matches Steinberg::Vst::ProcessMode.
+    int32_t processMode = 0;
 };
 
 // Host is the top-level JS class. It owns the NstHostApplication and provides

@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <functional>
+#include <unordered_set>
 
 #include "pluginterfaces/base/funknownimpl.h"
 #include "pluginterfaces/vst/ivsteditcontroller.h"
@@ -31,6 +32,28 @@ struct IPerformEditSink {
 
 // Callback signature for restart notifications delivered to JS.
 using RestartCallback = std::function<void(int32_t flags)>;
+
+// Callback invoked BEFORE the JS restart event is emitted, so the host can
+// re-query the affected SDK state (latency, bus info, etc.) for the given
+// flags. See PluginInstance::ApplyRestartFlags. Must be safe to call from any
+// thread (typically the controller thread, which is the JS thread here).
+using ApplyRestartCallback = std::function<void(int32_t flags)>;
+
+// A plugin→host event delivered to JS via the host-event TSFN. The payload
+// type is discriminated by `isBool` / `hasPayload`:
+//   - 'dirty'         → hasPayload=true, isBool=true,  value=0/1
+//   - 'beginGesture'  → hasPayload=true, isBool=false, value=paramId
+//   - 'endGesture'    → hasPayload=true, isBool=false, value=paramId
+//   - 'startGroup'    → hasPayload=false
+//   - 'finishGroup'   → hasPayload=false
+// `name` points at a string literal with static storage duration.
+struct HostEvent {
+    const char* name;
+    double value;
+    bool isBool;
+    bool hasPayload;
+};
+using HostEventCallback = std::function<void(const HostEvent&)>;
 
 // ComponentHandler implements IComponentHandler, IComponentHandler2, and
 // IComponentHandler3. It is held by PluginInstance (which retains a strong
@@ -57,6 +80,19 @@ public:
     // must be safe to call from any thread (typically a TSFN-blocking call).
     void setRestartCallback(RestartCallback cb) { restartCb_ = std::move(cb); }
 
+    // Set the callback invoked BEFORE the restart JS event is emitted, so the
+    // host can refresh cached SDK state (latency, bus info, etc.) for the
+    // restart flags. The callback is invoked synchronously from
+    // restartComponent() and must be safe to call from any thread. If unset,
+    // restartComponent() only emits the JS event (prior behavior).
+    void setApplyRestartCallback(ApplyRestartCallback cb) { applyRestartCb_ = std::move(cb); }
+
+    // Set the callback invoked when host-event methods are called by the
+    // plugin (setDirty, beginEdit, endEdit, startGroupEdit, finishGroupEdit).
+    // The callback must be safe to call from any thread (typically it
+    // dispatches via a TSFN owned by PluginInstance).
+    void setHostEventCallback(HostEventCallback cb) { hostEventCb_ = std::move(cb); }
+
     // --- IComponentHandler ---
     Steinberg::tresult PLUGIN_API beginEdit(Steinberg::Vst::ParamID id) override;
     Steinberg::tresult PLUGIN_API performEdit(Steinberg::Vst::ParamID id,
@@ -78,7 +114,19 @@ private:
     PluginInstance* instance_ = nullptr;
     IPerformEditSink* performEditSink_ = nullptr;
     RestartCallback restartCb_;
+    ApplyRestartCallback applyRestartCb_;
     std::atomic<int32_t> lastRestartFlags_{0};
+
+    // Active gesture tracking: parameter IDs with an open beginEdit gesture.
+    // Used by future automation recording to attribute performEdit points to
+    // their enclosing gesture. No mutex — gesture calls come from the
+    // controller thread (which is the JS thread in this host).
+    std::unordered_set<Steinberg::Vst::ParamID> activeGestures_;
+
+    // Plugin→host event callback (dirty, beginGesture, endGesture, startGroup,
+    // finishGroup). Invoked from any thread; the callback is responsible for
+    // thread-safe dispatch (typically via a TSFN).
+    HostEventCallback hostEventCb_;
 };
 
 } // namespace nst3

@@ -134,4 +134,36 @@ describe('Audio processing', { skip: !ensurePluginBuilt() }, () => {
                 `block ${i}: output should match input (gain=1.0)`);
     }
   });
+
+  test('inputSilenceFlags propagates to outputSilenceFlags for silent input', () => {
+    const inputs = makeSilence(2, 128);
+    const outputs = makeSilence(2, 128);
+    const result = plugin.process({
+      inputs,
+      outputs,
+      numSamples: 128,
+      inputSilenceFlags: [0b11],  // both channels of bus 0 silent
+    });
+    // GainProcessor mirrors input silenceFlags to output when input is fully silent.
+    assert.ok(result, 'process() should return a ProcessResult');
+    assert.ok(Array.isArray(result.outputSilenceFlags), 'outputSilenceFlags should be an array');
+    assert.strictEqual(result.outputSilenceFlags[0], 0b11,
+      'output bus 0 should be marked silent (both channels)');
+  });
+
+  test('inputSilenceFlags=0 with tone input yields outputSilenceFlags=0', () => {
+    const inputs = makeTone(2, 128, 440, 48000, 0.5);
+    const outputs = makeSilence(2, 128);
+    const result = plugin.process({
+      inputs,
+      outputs,
+      numSamples: 128,
+      inputSilenceFlags: [0],  // no silence hint
+    });
+    assert.ok(result, 'process() should return a ProcessResult');
+    assert.ok(Array.isArray(result.outputSilenceFlags), 'outputSilenceFlags should be an array');
+    assert.strictEqual(result.outputSilenceFlags[0], 0,
+      'output bus 0 should NOT be marked silent (tone input produces non-silent output)');
+    assert.ok(maxAbs(outputs) > 0, 'output should have non-zero samples');
+  });
 });

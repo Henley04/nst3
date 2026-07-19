@@ -40,4 +40,32 @@ private:
     size_t pos_ = 0;
 };
 
+// Versioned state-envelope helpers (Task 21).
+//
+// The envelope format is:
+//   bytes 0-3:   magic 'NST3' (0x4E, 0x53, 0x54, 0x33)
+//   byte  4:     version (currently 1)
+//   bytes 5-8:   component-state length (uint32 little-endian)
+//   bytes 9..:   component-state bytes
+//   next 4:      controller-state length (uint32 little-endian)
+//   next len2:   controller-state bytes
+//
+// Controller-state bytes may be empty (length 0). Legacy single-blob state
+// buffers (without the NST3 magic) are detected by parseStateEnvelope and
+// should be treated by the caller as plain component state.
+
+// Compose a versioned envelope from component-state and controller-state
+// bytes. Controller state may be empty.
+std::vector<uint8_t> composeStateEnvelope(const std::vector<uint8_t>& componentState,
+                                          const std::vector<uint8_t>& controllerState);
+
+// Parse a versioned envelope. Returns true if the buffer matches the envelope
+// format (magic 'NST3' + version 1) AND all length fields are consistent with
+// the buffer size. On success, fills componentState and controllerState with
+// copies of the sliced bytes. Returns false if the buffer is not an envelope
+// (caller should treat the whole buffer as legacy component state).
+bool parseStateEnvelope(const uint8_t* data, size_t size,
+                        std::vector<uint8_t>& componentState,
+                        std::vector<uint8_t>& controllerState);
+
 } // namespace nst3

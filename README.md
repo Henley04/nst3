@@ -13,17 +13,26 @@ It is built on the **official Steinberg VST3 SDK (v3.8.0, MIT-licensed)** and sh
 
 ## Features
 
-- **Load any VST3 plugin** — instantiate `IComponent` + `IAudioProcessor` + `IEditController` from any `.vst3` module on disk.
-- **Zero-copy audio processing** — pass `Float32Array` buffers directly into the plugin's `process()` call. No copies, no allocations on the hot path.
-- **Full parameter automation** — read parameter metadata, get/set normalized values, batch-update multiple parameters, format values to human-readable strings.
-- **MIDI input and output** — schedule Note On/Off, Poly Pressure, Controller, Program Change, Channel Pressure, Pitch Bend, and SysEx events; capture output events from instruments.
-- **State persistence** — serialize plugin state to a `Buffer` and restore it later (round-trip preserves all parameter values).
-- **Thread-safe restart notifications** — when a plugin requests a restart (e.g. latency changed, IO changed), a `Napi::ThreadSafeFunction` delivers the `RestartFlags` bitmask to your JavaScript callback safely across threads.
-- **Plugin discovery** — scan platform-default VST3 locations, arbitrary directories, or inspect a single `.vst3` module without instantiating it.
-- **Idempotent disposal** — `dispose()` is safe to call multiple times; `[Symbol.dispose]()` enables the `using` keyword for automatic scope-based cleanup.
-- **Cross-platform prebuilt binaries** — `npm install nvst3-host` ships native `.node` files for four platform triples; no toolchain needed for end users.
+- **Discovery** — scan platform-default VST3 locations, recursively scan an arbitrary directory, or inspect a single `.vst3` module without instantiating the DSP.
+- **Lifecycle** — `load()`, `setActive(bool)`, `setProcessing(bool)`, `dispose()` (idempotent), and `[Symbol.dispose]` enabling the `using` keyword for scope-based cleanup.
+- **Audio processing** — zero-copy `Float32Array` / `Float64Array` channel buffers; configurable sample size (32 or 64 bit); configurable process mode (`realtime` / `offline` / `prefetch`); parameter-flush blocks via `process({ numSamples: 0 })`; silence-flag propagation on input and output buses; tail-samples query (returns `Number.POSITIVE_INFINITY` for `kInfiniteTail`); latency query.
+- **Parameters** — `getParameter` / `setParameter` / `setParameters` (atomic batch), `getParameterInfo`, `formatParameter`, `parseParameter` (string → normalized), `plainToNormalized` / `normalizedToPlain`; `ParameterFlags.IsProgramChange` honored by plugins that expose program-change parameters.
+- **MIDI / events** — structured `MidiEvent`s (NoteOn / NoteOff / PolyPressure / Controller / ProgramChange / ChannelPressure / PitchBend / SysEx) plus raw `addMidiBytes`; optional `noteId` on NoteOn/NoteOff/PolyPressure for note-expression targeting; output event retrieval via `takeOutputEvents()`.
+- **State persistence** — `saveState()` writes a versioned `NST3` envelope (4-byte magic, 1-byte version, length-prefixed component + controller blobs); `loadState()` auto-detects the envelope and falls back to legacy single-blob loading for backward compatibility with 0.1.0 state files.
+- **Units & programs** — `IUnitInfo` enumeration (`getUnitCount`, `getUnitInfo`, `getProgramListCount`, `getProgramListInfo`, `getProgramName`, `selectProgram`, `getCurrentUnit`, `getUnitByBusInfo`); per-program and per-unit bulk data via `IProgramListData` / `IUnitData` (`getProgramData`, `setProgramData`, `getUnitData`, `setUnitData`).
+- **Note expression** — `INoteExpressionController` enumeration (`getNoteExpressionCount`, `getNoteExpressionInfo`) and `addNoteExpressionEvent({ noteId, typeId, value, sampleOffset? })` queuing.
+- **Keyswitches** — `IKeyswitchController` enumeration (`getKeyswitchCount`, `getKeyswitchInfo`).
+- **Bus management** — runtime `getBusList`, `getBusInfo`, `activateBus` (toggle individual buses while inactive); speaker-arrangement negotiation via `setBusArrangement` / `getBusArrangement` with the `SpeakerArrangement` enum; routing info via `getRoutingInfo`.
+- **Process context** — configurable tempo / time signature / transport (`playing`, `cycleActive`, `recording`) / `systemTime` / `continuousTimeSamples` via `setProcessContext` / `getProcessContext`; `IProcessContextRequirements` gating so the host skips recomputation of unneeded fields each block.
+- **Information interfaces** — `IAudioPresentationLatencySamples` (`setAudioPresentationLatency`); `IInfoListener` (`setChannelContextInfo`); `IPrefetchableSupport` (`isPrefetchable`); `IEditController2` (`setKnobMode`).
+- **Restart auto-react** — when the plugin calls `restartComponent`, the host automatically re-queries the affected SDK state (latency, bus info, etc.) BEFORE the JS `restart` event fires; `applyRestartFlags(flags)` is exposed for manual re-query.
+- **Mutable ProcessSetup** — `setProcessSetup({ sampleRate?, maxBlockSize?, processMode?, sampleSize? })` re-negotiates the setup for the next `setActive(true)` (requires `setActive(false)` first).
+- **Accurate PlugInterfaceSupport** — the host advertises exactly the 13 interfaces it implements via a custom `IPlugInterfaceSupport` (no GUI-only interfaces such as `IPlugView` / `IPlugFrame`).
+- **Plugin→host events** — `on('restart')`, `on('dirty')`, `on('beginGesture')`, `on('endGesture')`, `on('startGroup')`, `on('finishGroup')`, all delivered safely across threads via a `Napi::ThreadSafeFunction`.
+- **Error handling** — typed `NstError` with `code`, `cause`, `runtimeTriple`, and `supportedTriples` fields; 14 stable error codes covering load, activation, processing, state, MIDI, platform, and unexpected-fault conditions.
+- **Cross-platform prebuilt binaries** — `npm install nvst3-host` ships native `.node` files via `prebuildify` for `darwin-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`, `win32-x64`, and `win32-ia32`; no toolchain needed for end users.
 - **MIT-licensed end-to-end** — both `nvst3-host` and the bundled VST3 SDK are MIT-licensed (since SDK v3.7.7), so there are no licensing concerns for commercial or closed-source use.
-- **Strong TypeScript types** — a hand-written `index.d.ts` mirrors the native surface 1:1 for editor IntelliSense.
+- **Strong TypeScript types** — a hand-written `index.d.ts` mirrors the native surface 1:1, including all 14 enums and full JSDoc, for editor IntelliSense.
 
 ## Installation
 
@@ -280,9 +289,9 @@ This invokes `prebuildify --napi-version 8 --tag-armv -t 20.0.0` and writes `.no
 ### Limitations
 
 - **No GUI/editor support** — `nvst3-host` is a headless host. Plugins that ship only an editor still process audio correctly; their `IPlugView` is never opened.
-- **32-bit float only** — `kSample32` is used throughout. 64-bit double precision (`kSample64`) is not currently exposed.
+- **64-bit audio is opt-in** — `kSample32` is the default; 64-bit double precision (`kSample64`) is opt-in via `sampleSize: 64` in `HostOptions`/`LoadOptions`. The host silently falls back to 32 if the plugin refuses 64.
 - **Single-process context** — each `PluginInstance` owns its own component/controller pair; there is no built-in signal graph or routing layer. Compose plugins in JavaScript by chaining `process()` calls.
-- **No offline rendering mode** — `processMode` is always `kRealtime`. (Plugins that support `kOffline` will still run, but nvst3-host does not request it.)
+- **Process mode is configurable** — `realtime` is the default; `offline` and `prefetch` modes are opt-in via `processMode` in `HostOptions`/`LoadOptions`.
 - **macOS target** — binaries are built with `MACOSX_DEPLOYMENT_TARGET=10.13` (High Sierra and later).
 - **Linux target** — prebuilt binaries require `glibc ≥ 2.28` (Ubuntu 18.04+ / Debian 10+).
 

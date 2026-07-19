@@ -50,7 +50,7 @@
     "rebuild": "node-gyp rebuild",
     "clean": "node-gyp clean",
     "prebuild": "prebuildify --napi-version 8 --tag-armv -t 20.0.0",
-    "test": "node --test test/discovery.test.js test/errors.test.js test/load.test.js test/lifecycle.test.js test/midi.test.js test/parameters.test.js test/process.test.js test/state.test.js",
+    "test": "node --test test/discovery.test.js test/errors.test.js test/load.test.js test/lifecycle.test.js test/midi.test.js test/parameters.test.js test/process.test.js test/state.test.js test/sixty-four-bit.test.js test/offline-mode.test.js test/process-context.test.js test/bus-management.test.js test/units.test.js test/note-expression.test.js test/controller-state.test.js test/restart-auto-react.test.js test/host-handler-events.test.js",
     "test:plugin": "node test/plugin/build-plugin.js"
   },
   "dependencies": {

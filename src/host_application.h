@@ -6,6 +6,7 @@
 #pragma once
 
 #include "public.sdk/source/vst/hosting/hostclasses.h"
+#include "public.sdk/source/vst/hosting/pluginterfacesupport.h"
 
 #include <atomic>
 #include <functional>
@@ -16,8 +17,26 @@ namespace nst3 {
 // Forward decl
 class ComponentHandler;
 
+// NstPlugInterfaceSupport subclasses the SDK's PlugInterfaceSupport helper
+// and advertises exactly the host interfaces nst3 implements. This is the
+// list plugins see when they query IHostApplication::queryInterface for
+// IPlugInterfaceSupport and call isPlugInterfaceSupported on the result.
+//
+// We deliberately do NOT advertise GUI-only interfaces (IPlugFrame,
+// IPlugView, IPlugViewContentScaleSupport, IContextMenu) since nst3 does
+// not implement plugin editor embedding. Advertising them would cause
+// plugins to attempt GUI calls that the host cannot fulfill.
+class NstPlugInterfaceSupport : public Steinberg::Vst::PlugInterfaceSupport {
+public:
+    NstPlugInterfaceSupport();
+    ~NstPlugInterfaceSupport() noexcept override;
+};
+
 // NstHostApplication subclasses Steinberg::Vst::HostApplication and exposes
 // hooks for the host to receive callbacks from plugins (e.g. restartComponent).
+// It installs a custom IPlugInterfaceSupport (NstPlugInterfaceSupport) in its
+// constructor so plugins querying host capabilities see the accurate,
+// curated interface list rather than the SDK's default broad list.
 class NstHostApplication : public Steinberg::Vst::HostApplication {
 public:
     NstHostApplication();
@@ -34,6 +53,11 @@ public:
 
 private:
     ComponentHandler* handler_ = nullptr;
+    // The custom IPlugInterfaceSupport installed on the base HostApplication
+    // via setPlugInterfaceSupport(). Held as a member to keep it alive for the
+    // lifetime of NstHostApplication; the base class also retains a reference
+    // via its own IPtr, so the object is released only after both are gone.
+    Steinberg::IPtr<NstPlugInterfaceSupport> nstPlugInterfaceSupport_;
 };
 
 } // namespace nst3

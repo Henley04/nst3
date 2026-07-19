@@ -32,7 +32,7 @@ describe('Plugin load and info', { skip: !ensurePluginBuilt() }, () => {
     assert.strictEqual(info.numAudioOutputs, 2);
     assert.strictEqual(info.numMidiInputs, 0);
     assert.strictEqual(info.numMidiOutputs, 0);
-    assert.strictEqual(info.parameterCount, 1);
+    assert.strictEqual(info.parameterCount, 2);
     assert.strictEqual(info.hasController, true);
     assert.strictEqual(info.isSingleComponent, true);
     plugin.dispose();

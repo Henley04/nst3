@@ -26,18 +26,28 @@ enum class MidiEventType {
 
 // Convert raw MIDI 1.0 bytes (status + data bytes, no running status) to a
 // VST3 Event. Returns false if the bytes are malformed or empty.
+// `isLive` controls the Event::kIsLive flag (set by default; cleared for
+//        kOffline process mode so plugins don't treat events as live input).
+// `noteId` is propagated to Event::noteOn/noteOff/polyPressure.noteId when
+//        the parsed event is one of those types (default 0).
 bool midiBytesToEvent(const uint8_t* bytes, size_t numBytes, int32_t sampleOffset,
-                      Steinberg::Vst::Event& outEvent);
+                      Steinberg::Vst::Event& outEvent,
+                      bool isLive = true, int32_t noteId = 0);
 
 // Convert a structured MIDI event (matching JS shape) to a VST3 Event.
 // For SysEx, payload is provided separately; for other types, fields map
 // directly. Returns false on invalid input.
+// `isLive` controls the Event::kIsLive flag (set by default; cleared for
+//        kOffline process mode so plugins don't treat events as live input).
+// `noteId` is propagated to Event::noteOn/noteOff/polyPressure.noteId when
+//        the event type is one of those (default 0).
 bool structuredMidiToEvent(int type, int channel, int note, int velocity,
                            int controllerNumber, int controllerValue,
                            int programNumber, int pressure, int pitchBend,
                            const uint8_t* sysExData, size_t sysExSize,
                            int32_t sampleOffset,
-                           Steinberg::Vst::Event& outEvent);
+                           Steinberg::Vst::Event& outEvent,
+                           bool isLive = true, int32_t noteId = 0);
 
 // Convert a VST3 Event back to a structured representation suitable for JS.
 // Caller is responsible for freeing the SysEx buffer via the returned size.

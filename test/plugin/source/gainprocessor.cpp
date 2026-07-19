@@ -22,6 +22,7 @@ namespace Vst {
 //------------------------------------------------------------------------
 GainProcessor::GainProcessor()
 : currentGain_(1.f)
+, selectedUnit_(0)
 {
 }
 
@@ -40,6 +41,13 @@ tresult PLUGIN_API GainProcessor::initialize(FUnknown* context)
     // Range 0..1, default 1.0, automatable.
     parameters.addParameter(USTRING("Gain"), nullptr, 0, 1.f,
                             ParameterInfo::kCanAutomate, kGainId);
+
+    //---create the Program-change parameter----------------
+    // 2 steps (0=Init, 1=Bright), default 0 (Init). Tagged with
+    // kIsProgramChange so the host's selectProgram() can switch presets
+    // by setting this parameter normalized as programIndex/stepCount.
+    parameters.addParameter(USTRING("Program"), nullptr, 1, 0.f,
+                            ParameterInfo::kIsProgramChange, kProgramId);
 
     return kResultOk;
 }
@@ -76,7 +84,9 @@ tresult PLUGIN_API GainProcessor::setupProcessing(ProcessSetup& newSetup)
 //------------------------------------------------------------------------
 tresult PLUGIN_API GainProcessor::canProcessSampleSize(int32 symbolicSampleSize)
 {
-    if (symbolicSampleSize == kSample32)
+    // GainProcessor supports both 32-bit and 64-bit processing paths so the
+    // host's kSample64 code path can be exercised by the test suite.
+    if (symbolicSampleSize == kSample32 || symbolicSampleSize == kSample64)
         return kResultTrue;
     return kResultFalse;
 }
@@ -110,7 +120,8 @@ tresult PLUGIN_API GainProcessor::process(ProcessData& data)
         {
             if (IParamValueQueue* paramQueue = paramChanges->getParameterData(i))
             {
-                if (paramQueue->getParameterId() == kGainId)
+                ParamID pid = paramQueue->getParameterId();
+                if (pid == kGainId)
                 {
                     int32 sampleOffset = 0;
                     ParamValue value = 0;
@@ -119,6 +130,21 @@ tresult PLUGIN_API GainProcessor::process(ProcessData& data)
                         paramQueue->getPoint(numPoints - 1, sampleOffset, value) == kResultTrue)
                     {
                         currentGain_ = (float)value;
+                    }
+                }
+                else if (pid == kProgramId)
+                {
+                    // Mirror the program-change value into the parameter
+                    // collection so resolveGain() can read it. The base
+                    // SingleComponentEffect would do this for us if we called
+                    // its process(); since we don't, do it here.
+                    int32 sampleOffset = 0;
+                    ParamValue value = 0;
+                    int32 numPoints = paramQueue->getPointCount();
+                    if (numPoints > 0 &&
+                        paramQueue->getPoint(numPoints - 1, sampleOffset, value) == kResultTrue)
+                    {
+                        setParamNormalized(kProgramId, value);
                     }
                 }
             }
@@ -152,16 +178,17 @@ tresult PLUGIN_API GainProcessor::process(ProcessData& data)
 
     data.outputs[0].silenceFlags = 0;
 
-    //---apply gain factor---------------------------------
+    //---resolve effective gain (program-aware) and apply--
+    float effectiveGain = resolveGain();
     if (processSetup.symbolicSampleSize == kSample32)
     {
         applyGain<Sample32>((Sample32**)in, (Sample32**)out, numChannels, data.numSamples,
-                            (Sample32)currentGain_);
+                            (Sample32)effectiveGain);
     }
     else if (processSetup.symbolicSampleSize == kSample64)
     {
         applyGain<Sample64>((Sample64**)in, (Sample64**)out, numChannels, data.numSamples,
-                            (Sample64)currentGain_);
+                            (Sample64)effectiveGain);
     }
 
     return kResultOk;
@@ -193,6 +220,186 @@ tresult PLUGIN_API GainProcessor::getState(IBStream* state)
     if (streamer.writeFloat(currentGain_) == false)
         return kResultFalse;
     return kResultOk;
+}
+
+//------------------------------------------------------------------------
+float GainProcessor::resolveGain() const
+{
+    // When the program-change parameter is at step 1 ("Bright"), the
+    // effective gain is 0.7; otherwise the gain parameter value is
+    // used as-is. getParameterNormalized is not const in the base class,
+    // so cast away const for this read-only lookup.
+    ParamValue prog =
+        const_cast<GainProcessor*>(this)->getParameterNormalized(kProgramId);
+    if (prog > 0.5f)
+        return 0.7f;
+    return currentGain_;
+}
+
+//========================================================================
+// IUnitInfo implementation
+//
+// One top-level unit ("Root", id=0, no parent) with one program list
+// ("Presets", id=0, 2 programs: "Init" and "Bright").
+//========================================================================
+
+//------------------------------------------------------------------------
+int32 PLUGIN_API GainProcessor::getUnitCount()
+{
+    return 1;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getUnitInfo(int32 unitIndex, UnitInfo& info)
+{
+    if (unitIndex != 0)
+        return kInvalidArgument;
+    info.id = 0;
+    info.parentUnitId = kNoParentUnitId;
+    UString128 uName("Root");
+    uName.copyTo(info.name, 128);
+    info.programListId = 0;
+    return kResultTrue;
+}
+
+//------------------------------------------------------------------------
+int32 PLUGIN_API GainProcessor::getProgramListCount()
+{
+    return 1;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getProgramListInfo(int32 listIndex, ProgramListInfo& info)
+{
+    if (listIndex != 0)
+        return kInvalidArgument;
+    info.id = 0;
+    UString128 uName("Presets");
+    uName.copyTo(info.name, 128);
+    info.programCount = 2;
+    return kResultTrue;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getProgramName(ProgramListID listId, int32 programIndex,
+                                                  String128 name)
+{
+    if (listId != 0 || programIndex < 0 || programIndex > 1)
+        return kInvalidArgument;
+    const char* progName = (programIndex == 0) ? "Init" : "Bright";
+    UString128 uName(progName);
+    uName.copyTo(name, 128);
+    return kResultTrue;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getProgramInfo(ProgramListID /*listId*/,
+                                                  int32 /*programIndex*/,
+                                                  CString /*attributeId*/,
+                                                  String128 /*attributeValue*/)
+{
+    // No extra program attributes are exposed.
+    return kResultFalse;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::hasProgramPitchNames(ProgramListID /*listId*/,
+                                                       int32 /*programIndex*/)
+{
+    return kResultFalse;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getProgramPitchName(ProgramListID /*listId*/,
+                                                      int32 /*programIndex*/,
+                                                      int16 /*midiPitch*/,
+                                                      String128 /*name*/)
+{
+    return kResultFalse;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::selectUnit(UnitID unitId)
+{
+    if (unitId != 0)
+        return kResultFalse;
+    selectedUnit_ = unitId;
+    return kResultTrue;
+}
+
+//------------------------------------------------------------------------
+UnitID PLUGIN_API GainProcessor::getSelectedUnit()
+{
+    return selectedUnit_;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getUnitByBus(MediaType /*mediaType*/, BusDirection /*dir*/,
+                                               int32 /*busIndex*/, int32 /*channel*/,
+                                               UnitID& /*unitId*/)
+{
+    // No bus-to-unit mapping for this simple fixture.
+    return kResultFalse;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::setUnitProgramData(int32 /*listOrUnitId*/,
+                                                     int32 /*programIndex*/,
+                                                     IBStream* /*data*/)
+{
+    // No bulk program-data persistence for this fixture.
+    return kResultFalse;
+}
+
+//========================================================================
+// INoteExpressionController implementation
+//
+// Exposes one note-expression type (Volume) on any bus/channel.
+//========================================================================
+
+//------------------------------------------------------------------------
+int32 PLUGIN_API GainProcessor::getNoteExpressionCount(int32 /*busIndex*/, int16 /*channel*/)
+{
+    return 1;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getNoteExpressionInfo(int32 /*busIndex*/, int16 /*channel*/,
+                                                       int32 noteExpressionIndex,
+                                                       NoteExpressionTypeInfo& info)
+{
+    if (noteExpressionIndex != 0)
+        return kInvalidArgument;
+    std::memset(&info, 0, sizeof(info));
+    info.typeId = NoteExpressionTypeIDs::kVolumeTypeID;
+    UString128 title("Volume");
+    title.copyTo(info.title, 128);
+    UString128 shortTitle("Vol");
+    shortTitle.copyTo(info.shortTitle, 128);
+    info.unitId = 0;
+    info.associatedParameterId = kNoParamId;
+    info.flags = 0;
+    return kResultTrue;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getNoteExpressionStringByValue(int32 /*busIndex*/,
+                                                                 int16 /*channel*/,
+                                                                 NoteExpressionTypeID /*id*/,
+                                                                 NoteExpressionValue /*valueNormalized*/,
+                                                                 String128 /*string*/)
+{
+    return kResultFalse;
+}
+
+//------------------------------------------------------------------------
+tresult PLUGIN_API GainProcessor::getNoteExpressionValueByString(int32 /*busIndex*/,
+                                                                 int16 /*channel*/,
+                                                                 NoteExpressionTypeID /*id*/,
+                                                                 const TChar* /*string*/,
+                                                                 NoteExpressionValue& /*valueNormalized*/)
+{
+    return kResultFalse;
 }
 
 //------------------------------------------------------------------------
