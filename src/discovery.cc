@@ -97,21 +97,23 @@ void walkDirPosix(const std::string& dir, std::set<std::string>& seen,
         struct stat st;
         if (lstat(full.c_str(), &st) != 0) continue;
 
+        // Collect .vst3 entries regardless of type: on macOS a .vst3 is a
+        // bundle *directory* (Contents/MacOS/...), on Linux it may be a
+        // directory or a symlink. Do not recurse into bundles.
+        if (endsWithVst3(name)) {
+            char resolved[PATH_MAX];
+            if (!realpath(full.c_str(), resolved)) {
+                if (seen.insert(full).second) out.push_back(full);
+                continue;
+            }
+            if (seen.insert(resolved).second) out.push_back(resolved);
+            continue;
+        }
+
         if (S_ISDIR(st.st_mode)) {
             walkDirPosix(full, seen, out);
             continue;
         }
-        if (!S_ISREG(st.st_mode) && !S_ISLNK(st.st_mode)) continue;
-        if (!endsWithVst3(name)) continue;
-
-        // Canonicalize for dedup (follows symlinks like weakly_canonical).
-        char resolved[PATH_MAX];
-        if (!realpath(full.c_str(), resolved)) {
-            // realpath fails on broken symlinks; fall back to the raw path.
-            if (seen.insert(full).second) out.push_back(full);
-            continue;
-        }
-        if (seen.insert(resolved).second) out.push_back(resolved);
     }
     closedir(dh);
 }
