@@ -1,13 +1,13 @@
-# nst3
+# nvst3-host
 
 > Production-grade VST3 host for Node.js — load, automate, and process audio through any VST3 plugin with zero-copy buffers and prebuilt native binaries.
 
 [![CI](https://github.com/Henley04/nst3/workflows/CI/badge.svg)](https://github.com/Henley04/nst3/actions)
-[![npm version](https://img.shields.io/npm/v/nst3.svg)](https://www.npmjs.com/package/nst3)
+[![npm version](https://img.shields.io/npm/v/nvst3-host.svg)](https://www.npmjs.com/package/nvst3-host)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D16.17-brightgreen)](https://nodejs.org/)
 
-`nst3` brings the VST3 plugin ecosystem to Node.js. Load any VST3 plugin, push audio through it with **zero-copy `Float32Array` buffers**, automate parameters, send MIDI events, save and restore plugin state, and react to plugin-initiated restart notifications — all from JavaScript, with no GUI, no DAW, and no compiler toolchain required at install time.
+`nvst3-host` brings the VST3 plugin ecosystem to Node.js. Load any VST3 plugin, push audio through it with **zero-copy `Float32Array` buffers**, automate parameters, send MIDI events, save and restore plugin state, and react to plugin-initiated restart notifications — all from JavaScript, with no GUI, no DAW, and no compiler toolchain required at install time.
 
 It is built on the **official Steinberg VST3 SDK (v3.8.0, MIT-licensed)** and ships **prebuilt native binaries** for Windows, macOS (Intel + Apple Silicon), and Linux.
 
@@ -21,14 +21,14 @@ It is built on the **official Steinberg VST3 SDK (v3.8.0, MIT-licensed)** and sh
 - **Thread-safe restart notifications** — when a plugin requests a restart (e.g. latency changed, IO changed), a `Napi::ThreadSafeFunction` delivers the `RestartFlags` bitmask to your JavaScript callback safely across threads.
 - **Plugin discovery** — scan platform-default VST3 locations, arbitrary directories, or inspect a single `.vst3` module without instantiating it.
 - **Idempotent disposal** — `dispose()` is safe to call multiple times; `[Symbol.dispose]()` enables the `using` keyword for automatic scope-based cleanup.
-- **Cross-platform prebuilt binaries** — `npm install nst3` ships native `.node` files for four platform triples; no toolchain needed for end users.
-- **MIT-licensed end-to-end** — both `nst3` and the bundled VST3 SDK are MIT-licensed (since SDK v3.7.7), so there are no licensing concerns for commercial or closed-source use.
+- **Cross-platform prebuilt binaries** — `npm install nvst3-host` ships native `.node` files for four platform triples; no toolchain needed for end users.
+- **MIT-licensed end-to-end** — both `nvst3-host` and the bundled VST3 SDK are MIT-licensed (since SDK v3.7.7), so there are no licensing concerns for commercial or closed-source use.
 - **Strong TypeScript types** — a hand-written `index.d.ts` mirrors the native surface 1:1 for editor IntelliSense.
 
 ## Installation
 
 ```bash
-npm install nst3
+npm install nvst3-host
 ```
 
 No compiler toolchain required — prebuilt binaries are shipped for:
@@ -50,7 +50,7 @@ If no prebuilt binary matches your runtime, `node-gyp-build` automatically falls
 ## Quick Start
 
 ```js
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 
 // 1. Create a host with the audio format you want to process at.
 const host = new Host({
@@ -105,7 +105,7 @@ The full surface is documented in [`docs/API.md`](docs/API.md). The two main cla
 ### `Host`
 
 ```js
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 ```
 
 - `new Host(opts?)` — construct a host with `sampleRate`, `maxBlockSize`, `audioInputs`, `audioOutputs` (all optional, with sensible defaults).
@@ -131,7 +131,7 @@ Obtained from `host.load(...)`. Never call `new PluginInstance(...)` directly.
 `addMidiEvent` accepts a discriminated union tagged by `type`. Use the `MidiEventType` enum to construct events:
 
 ```js
-const { Host, MidiEventType } = require('nst3');
+const { Host, MidiEventType } = require('nvst3-host');
 
 const host = new Host({ sampleRate: 48000, maxBlockSize: 512 });
 const synth = host.load('/path/to/Synth.vst3');
@@ -171,10 +171,10 @@ synth.addMidiBytes(0, Uint8Array.from([0x90, 60, 100]));
 
 ## Error Handling
 
-All errors thrown by `nst3` carry a `code` property with one of the `VST3_*` error codes documented in [`docs/API.md`](docs/API.md#error-codes).
+All errors thrown by `nvst3-host` carry a `code` property with one of the `VST3_*` error codes documented in [`docs/API.md`](docs/API.md#error-codes).
 
 ```js
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 const host = new Host();
 
 try {
@@ -196,7 +196,7 @@ After any `process()` failure, the plugin enters a **faulted** state and all sub
 
 ```js
 const fs = require('fs');
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 
 const host = new Host();
 const plugin = host.load('/path/to/SomePlugin.vst3');
@@ -270,7 +270,7 @@ This invokes `prebuildify --napi-version 8 --tag-armv -t 20.0.0` and writes `.no
 
 ## Performance
 
-`nst3` is designed for real-time, block-based audio processing:
+`nvst3-host` is designed for real-time, block-based audio processing:
 
 - **Zero-copy buffers** — `Float32Array` channel data is handed directly to the plugin via `AudioBusBuffers` channel pointers. There is no copy on input or output.
 - **No allocations on the hot path** — `ProcessData`, `AudioBusBuffers`, `ParameterChangesContainer`, and `EventListContainer` are reused across `process()` calls; `setParameter` queues changes into pre-allocated queues. Steady-state `process()` does not allocate.
@@ -279,10 +279,10 @@ This invokes `prebuildify --napi-version 8 --tag-armv -t 20.0.0` and writes `.no
 
 ### Limitations
 
-- **No GUI/editor support** — `nst3` is a headless host. Plugins that ship only an editor still process audio correctly; their `IPlugView` is never opened.
+- **No GUI/editor support** — `nvst3-host` is a headless host. Plugins that ship only an editor still process audio correctly; their `IPlugView` is never opened.
 - **32-bit float only** — `kSample32` is used throughout. 64-bit double precision (`kSample64`) is not currently exposed.
 - **Single-process context** — each `PluginInstance` owns its own component/controller pair; there is no built-in signal graph or routing layer. Compose plugins in JavaScript by chaining `process()` calls.
-- **No offline rendering mode** — `processMode` is always `kRealtime`. (Plugins that support `kOffline` will still run, but nst3 does not request it.)
+- **No offline rendering mode** — `processMode` is always `kRealtime`. (Plugins that support `kOffline` will still run, but nvst3-host does not request it.)
 - **macOS target** — binaries are built with `MACOSX_DEPLOYMENT_TARGET=10.13` (High Sierra and later).
 - **Linux target** — prebuilt binaries require `glibc ≥ 2.28` (Ubuntu 18.04+ / Debian 10+).
 
