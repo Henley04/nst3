@@ -106,17 +106,28 @@ elseif(UNIX)
     )
 elseif(WIN32)
     target_sources(Gain PRIVATE ${VST3_SDK_ROOT}/public.sdk/source/main/dllmain.cpp)
-    # Note: do NOT set LIBRARY_OUTPUT_DIRECTORY here. The Visual Studio
-    # multi-config generator already appends a per-config subdir (e.g.
-    # `Release/`) to the output directory, so setting it to
-    # `${CMAKE_BINARY_DIR}/Release` produces `build/Release/Release/Gain.vst3`,
-    # which the JS build script's resolveBundlePath() doesn't look for.
-    # Leaving it unset yields `build/Release/Gain.vst3`, which matches.
+    # The host loader (module_win32.cpp) handles two layouts:
+    #   - flat DLL:   <dir>/Gain.vst3 (a file)        → LoadLibraryW(path)
+    #   - bundle dir: <dir>/Gain.vst3/Contents/x86_64-win/Gain.vst3
+    # We use the flat-DLL layout: helpers.js points at `build/Gain.vst3`
+    # directly. With the Visual Studio multi-config generator the DLL would
+    # normally land at `build/Release/Gain.vst3`; we override both the global
+    # and per-config output dirs to force it to `build/Gain.vst3` so the path
+    # matches Linux/macOS bundle root and the JS test helpers find it.
     set_target_properties(Gain PROPERTIES
         PREFIX ""
         OUTPUT_NAME "Gain"
         SUFFIX ".vst3"
+        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
+        RUNTIME_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}"
     )
+    foreach(CFG ${CMAKE_CONFIGURATION_TYPES})
+        string(TOUPPER ${CFG} CFG_UPPER)
+        set_target_properties(Gain PROPERTIES
+            LIBRARY_OUTPUT_DIRECTORY_${CFG_UPPER} "${CMAKE_BINARY_DIR}"
+            RUNTIME_OUTPUT_DIRECTORY_${CFG_UPPER} "${CMAKE_BINARY_DIR}"
+        )
+    endforeach()
     target_compile_definitions(Gain PRIVATE
         WINDOWS=1 _WIN32 _WINDOWS NOMINMAX
         _CRT_SECURE_NO_WARNINGS _SCL_SECURE_NO_WARNINGS

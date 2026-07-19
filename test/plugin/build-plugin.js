@@ -46,14 +46,14 @@ function run(cmd, args, cwd) {
 function resolveBundlePath() {
     const bundleDir = path.join(BUILD_DIR, 'Gain.vst3');
     if (process.platform === 'win32') {
-        // On Windows the .vst3 file is a DLL. With the Visual Studio multi-config
-        // generator + --config Release, the default output dir is build/Release/.
-        // Some generator/setting combinations place it under build/Release/Release/
-        // (when LIBRARY_OUTPUT_DIRECTORY is explicitly set); check both.
+        // The CMakeLists.txt overrides LIBRARY_OUTPUT_DIRECTORY (and the
+        // per-config variants) so the flat-DLL layout lands at
+        // `build/Gain.vst3` for every Visual Studio multi-config subdir.
+        // For robustness we also accept the older `build/Release/...` paths.
         const candidates = [
+            path.join(BUILD_DIR, 'Gain.vst3'),
             path.join(BUILD_DIR, 'Release', 'Gain.vst3'),
             path.join(BUILD_DIR, 'Release', 'Release', 'Gain.vst3'),
-            path.join(BUILD_DIR, 'Gain.vst3'),
         ];
         for (const c of candidates) {
             if (fs.existsSync(c)) return c;
