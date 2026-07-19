@@ -627,7 +627,27 @@ void PluginInstance::teardown() {
 
     handler_.reset();
     hostApp_ = nullptr;
+#ifdef _WIN32
+    // On Windows, FreeLibrary'ing the plugin DLL while the host process is
+    // still alive has proven unsafe: the VST3 SDK registers singleton
+    // objects (e.g. UpdateHandler) inside the plugin DLL, and the DLL's
+    // static-destruct phase (run from within FreeLibrary) can access
+    // cross-binary state in ways that intermittently surface as
+    // 0xC0000005 access violations at process exit. By moving the module
+    // reference into a process-lifetime leak set we let the OS reclaim
+    // the DLL when the process exits, sidestepping the in-process unload.
+    // The Module object itself is allocated in the host addon's heap, so
+    // leaking its shared_ptr does not leak host-addon memory across loads
+    // (only the underlying HMODULE stays mapped until exit). This matches
+    // the behavior of the discovery path and is acceptable for a
+    // short-lived test-runner / batch-host process.
+    {
+        static std::vector<VST3::Hosting::Module::Ptr> leakedModules;
+        leakedModules.push_back(std::move(module_));
+    }
+#else
     module_.reset();
+#endif
 }
 
 void PluginInstance::checkAlive() const {
