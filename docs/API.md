@@ -42,7 +42,9 @@ The `PluginInstance` class. See [`PluginInstance`](#plugininstance) below.
 
 ### `SUPPORTED_TRIPLES: readonly string[]`
 
-List of platform triples for which prebuilt binaries are shipped.
+List of platform triples supported by nst3. Prebuilt binaries are shipped for
+`win32-x64`, `darwin-arm64`, and `linux-x64`; `darwin-x64` (Intel Macs) is
+supported via source-build fallback.
 
 ```js
 const { SUPPORTED_TRIPLES } = require('nst3');
