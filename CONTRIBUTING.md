@@ -1,6 +1,6 @@
-# Contributing to nst3
+# Contributing to nvst3-host
 
-Thanks for your interest in contributing to `nst3`! This document covers everything you need to get a local development environment running, build the project, run the tests, and submit a pull request.
+Thanks for your interest in contributing to `nvst3-host`! This document covers everything you need to get a local development environment running, build the project, run the tests, and submit a pull request.
 
 ## Prerequisites
 
@@ -15,11 +15,11 @@ Thanks for your interest in contributing to `nst3`! This document covers everyth
 
 ## Getting the Source
 
-`nst3` bundles the official Steinberg VST3 SDK as a git submodule under `third_party/vst3sdk/`. Always clone with submodules:
+`nvst3-host` bundles the official Steinberg VST3 SDK as a git submodule under `third_party/vst3sdk/`. Always clone with submodules:
 
 ```bash
-git clone --recursive https://github.com/Henley04/nst3.git
-cd nst3
+git clone --recursive https://github.com/Henley04/nvst3-host.git
+cd nvst3-host
 ```
 
 If you already cloned without `--recursive`:

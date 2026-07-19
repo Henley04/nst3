@@ -1,9 +1,9 @@
 'use strict';
-// nst3 — VST3 Host for Node.js
+// nvst3-host — VST3 Host for Node.js
 // Loader: resolves the prebuilt native binary (or falls back to a source build)
 // via node-gyp-build, then re-exports the addon surface.
 //
-// End users never need a C++ toolchain: `npm install nst3` ships prebuilt
+// End users never need a C++ toolchain: `npm install nvst3-host` ships prebuilt
 // .node binaries for win32-x64, darwin-arm64 and linux-x64 inside the npm
 // tarball. darwin-x64 (Intel Macs) is still supported via source-build
 // fallback. If no prebuilt matches the current runtime, node-gyp-build
@@ -26,6 +26,9 @@ function describeRuntime() {
 function loadNative() {
     // node-gyp-build resolves prebuilds/<triple>/nst3.node or falls back to
     // build/Release/nst3.node (the latter produced by `npm run build`).
+    // Note: the .node filename is "nst3.node" because binding.gyp's
+    // target_name is "nst3"; this is an internal build artifact name and
+    // is independent of the npm package name.
     const binding = require('node-gyp-build')(path.join(__dirname));
     return binding;
 }
@@ -39,7 +42,7 @@ try {
         // Truly unsupported platform — surface a structured error so callers
         // can detect this case programmatically.
         const e = new Error(
-            `nst3: unsupported platform '${triple}'. ` +
+            `nvst3-host: unsupported platform '${triple}'. ` +
             `Supported triples: ${SUPPORTED_TRIPLES.join(', ')}.`
         );
         e.code = 'VST3_PLATFORM_UNSUPPORTED';
@@ -50,7 +53,7 @@ try {
     // Supported triple but binary still missing — typically a toolchain issue
     // during a source-build fallback. Re-throw with extra context.
     const e = new Error(
-        `nst3: failed to load native binary for '${triple}'. ` +
+        `nvst3-host: failed to load native binary for '${triple}'. ` +
         `Run 'npm run build' from the package directory, or reinstall ` +
         `to obtain the prebuilt binary. Underlying error: ${err && err.message ? err.message : err}`
     );

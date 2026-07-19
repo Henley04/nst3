@@ -48,4 +48,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - macOS binaries target `MACOSX_DEPLOYMENT_TARGET=10.13` (High Sierra and later).
 - No native async/batch API — all calls are synchronous from JavaScript's perspective (audio thread work happens inside `process()`).
 
-[0.1.0]: https://github.com/Henley04/nst3/releases/tag/v0.1.0
+[0.1.0]: https://github.com/Henley04/nvst3-host/releases/tag/v0.1.0

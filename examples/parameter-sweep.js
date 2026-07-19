@@ -332,7 +332,7 @@ function main() {
 
             // Param value at the start of the block (sample-accurate ramping
             // within a block would require setParameters with sub-block
-            // offsets, which the nst3 API does not expose — one value per
+            // offsets, which the nvst3-host API does not expose — one value per
             // process() call is the standard approximation used here).
             const tSec = blockStart / SAMPLE_RATE;
             const value = sweepValueAt(tSec);
@@ -403,7 +403,7 @@ function main() {
 
 try {
     const v = version();
-    console.log(`nst3 ${v.native} (VST3 SDK ${v.vst3sdk}, N-API v${v.napi})`);
+    console.log(`nvst3-host ${v.native} (VST3 SDK ${v.vst3sdk}, N-API v${v.napi})`);
     main();
 } catch (err) {
     console.error(`\nFatal: ${err && err.message ? err.message : err}`);

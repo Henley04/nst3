@@ -6,13 +6,13 @@
   "types": "index.d.ts",
   "license": "MIT",
   "author": "Henley Sun <Henley04@users.noreply.github.com>",
-  "homepage": "https://github.com/Henley04/nst3",
+  "homepage": "https://github.com/Henley04/nvst3-host",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/Henley04/nst3.git"
+    "url": "git+https://github.com/Henley04/nvst3-host.git"
   },
   "bugs": {
-    "url": "https://github.com/Henley04/nst3/issues"
+    "url": "https://github.com/Henley04/nvst3-host/issues"
   },
   "keywords": [
     "vst",

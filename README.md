@@ -2,7 +2,7 @@
 
 > Production-grade VST3 host for Node.js — load, automate, and process audio through any VST3 plugin with zero-copy buffers and prebuilt native binaries.
 
-[![CI](https://github.com/Henley04/nst3/workflows/CI/badge.svg)](https://github.com/Henley04/nst3/actions)
+[![CI](https://github.com/Henley04/nvst3-host/workflows/CI/badge.svg)](https://github.com/Henley04/nvst3-host/actions)
 [![npm version](https://img.shields.io/npm/v/nvst3-host.svg)](https://www.npmjs.com/package/nvst3-host)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Node.js](https://img.shields.io/badge/node-%3E%3D16.17-brightgreen)](https://nodejs.org/)
@@ -233,8 +233,8 @@ End users should never need this — prebuilt binaries cover all supported platf
 
 ```bash
 # 1. Clone with the VST3 SDK submodule.
-git clone --recursive https://github.com/Henley04/nst3.git
-cd nst3
+git clone --recursive https://github.com/Henley04/nvst3-host.git
+cd nvst3-host
 
 # 2. If you cloned without --recursive:
 git submodule update --init --recursive

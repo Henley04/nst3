@@ -1,6 +1,6 @@
-# nst3 API Reference
+# nvst3-host API Reference
 
-This document is the authoritative reference for the `nst3` module. It mirrors the hand-written [`index.d.ts`](../index.d.ts) 1:1; if you only need IntelliSense, install the package and your editor will pick up the types automatically.
+This document is the authoritative reference for the `nvst3-host` module. It mirrors the hand-written [`index.d.ts`](../index.d.ts) 1:1; if you only need IntelliSense, install the package and your editor will pick up the types automatically.
 
 - [Module Exports](#module-exports)
 - [Host](#host)
@@ -16,7 +16,7 @@ This document is the authoritative reference for the `nst3` module. It mirrors t
 The module's default export is an object exposing the following surface.
 
 ```js
-const nst3 = require('nst3');
+const nst3 = require('nvst3-host');
 // nst3.Host, nst3.PluginInstance, nst3.version, nst3.ParameterFlags, ...
 ```
 
@@ -27,7 +27,7 @@ Returns version information about the native addon and its dependencies.
 **Returns**: [`VersionInfo`](#versioninfo)
 
 ```js
-const { version } = require('nst3');
+const { version } = require('nvst3-host');
 console.log(version());
 // { native: '0.1.0', vst3sdk: 'VST 3.8.0', napi: 8 }
 ```
@@ -42,12 +42,12 @@ The `PluginInstance` class. See [`PluginInstance`](#plugininstance) below.
 
 ### `SUPPORTED_TRIPLES: readonly string[]`
 
-List of platform triples supported by nst3. Prebuilt binaries are shipped for
+List of platform triples supported by nvst3-host. Prebuilt binaries are shipped for
 `win32-x64`, `darwin-arm64`, and `linux-x64`; `darwin-x64` (Intel Macs) is
 supported via source-build fallback.
 
 ```js
-const { SUPPORTED_TRIPLES } = require('nst3');
+const { SUPPORTED_TRIPLES } = require('nvst3-host');
 // ['win32-x64', 'darwin-x64', 'darwin-arm64', 'linux-x64']
 ```
 
@@ -105,7 +105,7 @@ Construct a host with the given audio format.
 **Example**:
 
 ```js
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 const host = new Host({
   sampleRate: 44100,
   maxBlockSize: 256,
@@ -168,7 +168,7 @@ Default locations per platform:
 | Linux    | `/usr/lib/vst3/`, `/usr/local/lib/vst3/`, `~/.vst3/` |
 
 ```js
-const { Host } = require('nst3');
+const { Host } = require('nvst3-host');
 const plugins = Host.scanDefaultLocations();
 for (const p of plugins) {
   console.log(`${p.name} — ${p.vendor} — ${p.version}`);
@@ -287,7 +287,7 @@ Register a listener for plugin-initiated events. Currently only `'restart'` is s
 The listener is invoked asynchronously on the JavaScript thread via a `Napi::ThreadSafeFunction` — it is safe to call any `PluginInstance` method from inside it. The `flags` argument is a bitmask of one or more `RestartFlags` values (e.g. `RestartFlags.LatencyChanged | RestartFlags.ParamValuesChanged`).
 
 ```js
-const { RestartFlags } = require('nst3');
+const { RestartFlags } = require('nvst3-host');
 plugin.on('restart', (flags) => {
   if (flags & RestartFlags.LatencyChanged) {
     console.log('Latency changed:', plugin.getLatency());
@@ -326,7 +326,7 @@ console.log('Latency:', plugin.getLatency(), 'samples');
 
 #### `setActive(active: boolean): void`
 
-Activate or deactivate the plugin. When activating, nst3 calls:
+Activate or deactivate the plugin. When activating, nvst3-host calls:
 
 1. `IAudioProcessor::setupProcessing(setup)` with the host's `ProcessSetup`.
 2. `IComponent::setActive(true)`.
@@ -517,7 +517,7 @@ Schedule a MIDI event for the next `process()` call. The event is consumed after
 - `VST3_FAULTED` — if the instance is disposed or faulted.
 
 ```js
-const { MidiEventType } = require('nst3');
+const { MidiEventType } = require('nvst3-host');
 plugin.addMidiEvent({
   type: MidiEventType.NoteOn,
   channel: 0,
@@ -852,7 +852,7 @@ interface NstError extends Error {
 }
 ```
 
-The shape of every error thrown by `nst3`. `code` is one of the `VST3_*` codes listed under [Error Codes](#error-codes). `runtimeTriple` and `supportedTriples` are populated only on `VST3_PLATFORM_UNSUPPORTED` errors thrown by the loader (`index.js`).
+The shape of every error thrown by `nvst3-host`. `code` is one of the `VST3_*` codes listed under [Error Codes](#error-codes). `runtimeTriple` and `supportedTriples` are populated only on `VST3_PLATFORM_UNSUPPORTED` errors thrown by the loader (`index.js`).
 
 ```js
 try {
@@ -923,7 +923,7 @@ Bitmask flags describing a parameter's capabilities. Stored in `ParameterInfo.fl
 | `IsBypass`        | `1 << 16` (`65536`)  | Parameter is the bypass switch. |
 
 ```js
-const { ParameterFlags } = require('nst3');
+const { ParameterFlags } = require('nvst3-host');
 const info = plugin.getParameterInfo(0);
 if (info.flags & ParameterFlags.CanAutomate) {
   console.log('Parameter is automatable');
@@ -999,7 +999,7 @@ A const object mapping friendly names to the VST3 sub-category strings. Useful f
 | `InstrumentSynthSampler` | `"Instrument|Synth|Sampler"` |
 
 ```js
-const { Host, PluginCategory } = require('nst3');
+const { Host, PluginCategory } = require('nvst3-host');
 const reverb = Host.scanDefaultLocations()
   .filter(p => p.subCategories.split('|').includes(PluginCategory.FxReverb));
 ```
@@ -1008,7 +1008,7 @@ const reverb = Host.scanDefaultLocations()
 
 ## Error Codes
 
-Every error thrown by `nst3` carries a `code` property with one of the following values. The `code` is the stable machine-readable identifier; the `message` is human-readable and may change between versions.
+Every error thrown by `nvst3-host` carries a `code` property with one of the following values. The `code` is the stable machine-readable identifier; the `message` is human-readable and may change between versions.
 
 ### `VST3_LOAD_FAILED`
 
@@ -1056,13 +1056,13 @@ The instance is in a faulted state — a previous `process()` call returned a fa
 
 The current platform/architecture triple is not in `SUPPORTED_TRIPLES`. The native binary cannot be loaded and source-build fallback is not attempted.
 
-**Thrown by**: the loader (`index.js`) at `require('nst3')` time.
+**Thrown by**: the loader (`index.js`) at `require('nvst3-host')` time.
 
 The error object also includes `runtimeTriple` (the detected triple) and `supportedTriples` (the list of supported triples).
 
 ```js
 try {
-  require('nst3');
+  require('nvst3-host');
 } catch (err) {
   if (err.code === 'VST3_PLATFORM_UNSUPPORTED') {
     console.error(`Unsupported: ${err.runtimeTriple}`);
@@ -1103,6 +1103,6 @@ A MIDI event was malformed. Causes include: unknown event type, missing required
 
 ### `VST3_UNKNOWN`
 
-An unexpected error occurred that does not map to any of the above categories. Includes the underlying C++ exception message in `err.message` and the original error in `err.cause` (if available). If you encounter this, please [open an issue](https://github.com/Henley04/nst3/issues) with a reproduction.
+An unexpected error occurred that does not map to any of the above categories. Includes the underlying C++ exception message in `err.message` and the original error in `err.cause` (if available). If you encounter this, please [open an issue](https://github.com/Henley04/nvst3-host/issues) with a reproduction.
 
 **Thrown by**: any method, as a catch-all for unexpected SDK exceptions.

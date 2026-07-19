@@ -2,8 +2,8 @@
 
 #define stringOriginalName "Gain"
 #define stringOriginalFile "Gain"
-#define stringOriginalAuthor "nst3"
-#define stringOriginalVendorWeb "https://github.com/Henley04/nst3"
+#define stringOriginalAuthor "nvst3-host"
+#define stringOriginalVendorWeb "https://github.com/Henley04/nvst3-host"
 #define stringOriginalEmail "Henley04@users.noreply.github.com"
 
 #define MAJOR_VERSION_STR "1"
