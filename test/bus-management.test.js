@@ -60,7 +60,7 @@ describe('Runtime bus management', { skip: !ensurePluginBuilt() }, () => {
     // plugin is currently active (setActive(true) in beforeEach).
     assert.throws(
       () => plugin.activateBus(MediaType.Audio, BusDirection.Input, 0, false),
-      /VST3_INVALID_PARAMETER/
+      (err) => err.code === 'VST3_INVALID_PARAMETER'
     );
   });
 

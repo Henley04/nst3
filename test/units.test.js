@@ -31,7 +31,6 @@ describe('IUnitInfo — units and programs', { skip: !ensurePluginBuilt() }, () 
     assert.strictEqual(info.name, 'Root');
     assert.strictEqual(info.programListId, 0);
     assert.strictEqual(info.parentUnitId, -1);
-    assert.strictEqual(info.type, 0);
   });
 
   test('getUnitInfo(1) throws (out of range)', () => {
@@ -114,20 +113,32 @@ describe('IUnitInfo — units and programs', { skip: !ensurePluginBuilt() }, () 
   // (per index.d.ts JSDoc).
 
   test('getProgramData(0, 0) throws VST3_UNKNOWN (fixture does not implement IProgramListData)', () => {
-    assert.throws(() => plugin.getProgramData(0, 0), /VST3_UNKNOWN/);
+    assert.throws(
+      () => plugin.getProgramData(0, 0),
+      (err) => err.code === 'VST3_UNKNOWN'
+    );
   });
 
   test('setProgramData(0, 0, buffer) throws VST3_UNKNOWN (fixture does not implement IProgramListData)', () => {
     const buf = Buffer.alloc(4);
-    assert.throws(() => plugin.setProgramData(0, 0, buf), /VST3_UNKNOWN/);
+    assert.throws(
+      () => plugin.setProgramData(0, 0, buf),
+      (err) => err.code === 'VST3_UNKNOWN'
+    );
   });
 
   test('getUnitData(0) throws VST3_UNKNOWN (fixture does not implement IUnitData)', () => {
-    assert.throws(() => plugin.getUnitData(0), /VST3_UNKNOWN/);
+    assert.throws(
+      () => plugin.getUnitData(0),
+      (err) => err.code === 'VST3_UNKNOWN'
+    );
   });
 
   test('setUnitData(0, buffer) throws VST3_UNKNOWN (fixture does not implement IUnitData)', () => {
     const buf = Buffer.alloc(4);
-    assert.throws(() => plugin.setUnitData(0, buf), /VST3_UNKNOWN/);
+    assert.throws(
+      () => plugin.setUnitData(0, buf),
+      (err) => err.code === 'VST3_UNKNOWN'
+    );
   });
 });

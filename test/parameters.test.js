@@ -179,7 +179,7 @@ describe('Parameter conversion (plainToNormalized / normalizedToPlain / parsePar
     // The Gain parameter refuses non-numeric strings.
     assert.throws(
       () => plugin.parseParameter(0, 'not-a-number'),
-      /VST3_INVALID_PARAMETER/
+      (err) => err.code === 'VST3_INVALID_PARAMETER'
     );
   });
 });

@@ -2003,7 +2003,8 @@ Napi::Value PluginInstance::GetNoteExpressionInfo(const Napi::CallbackInfo& info
         o.Set("shortTitle", Napi::String::New(env, string128ToUtf8(ne.shortTitle)));
         o.Set("unitId", Napi::Number::New(env, static_cast<double>(ne.unitId)));
         o.Set("associatedParameterId",
-              Napi::Number::New(env, static_cast<double>(ne.associatedParameterId)));
+              Napi::Number::New(env, static_cast<double>(
+                  static_cast<int32_t>(ne.associatedParameterId))));
         o.Set("flags", Napi::Number::New(env, static_cast<double>(ne.flags)));
         return o;
     });
