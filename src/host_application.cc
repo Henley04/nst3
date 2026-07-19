@@ -83,6 +83,7 @@ NstHostApplication::~NstHostApplication() noexcept {
     // PlugInterfaceSupport held in its internal IPtr. We just clear our raw
     // pointer to the component handler (the handler is owned elsewhere).
     handler_ = nullptr;
+    nstPlugInterfaceSupport_.reset();
 }
 
 Steinberg::tresult PLUGIN_API NstHostApplication::getName(Steinberg::Vst::String128 name) {

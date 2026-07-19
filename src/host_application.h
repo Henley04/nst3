@@ -57,6 +57,11 @@ public:
 
 private:
     ComponentHandler* handler_ = nullptr;
+    // The custom IPlugInterfaceSupport installed on the base HostApplication
+    // via setPlugInterfaceSupport(). Held as a member to keep it alive for the
+    // lifetime of NstHostApplication; the base class also retains a reference
+    // via its own IPtr, so the object is released only after both are gone.
+    Steinberg::IPtr<NstPlugInterfaceSupport> nstPlugInterfaceSupport_;
 };
 
 } // namespace nst3
