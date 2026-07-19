@@ -1,6 +1,6 @@
 {
   "name": "nvst3-host",
-  "version": "0.0.1-pre.0",
+  "version": "0.1.0",
   "description": "Production-grade VST3 host for Node.js — load, automate, and process audio through any VST3 plugin with zero-copy buffers and prebuilt native binaries.",
   "main": "index.js",
   "types": "index.d.ts",
