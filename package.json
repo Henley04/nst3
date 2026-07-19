@@ -9,7 +9,7 @@
   "homepage": "https://github.com/Henley04/nst3",
   "repository": {
     "type": "git",
-    "url": "https://github.com/Henley04/nst3.git"
+    "url": "git+https://github.com/Henley04/nst3.git"
   },
   "bugs": {
     "url": "https://github.com/Henley04/nst3/issues"
