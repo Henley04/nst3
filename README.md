@@ -36,7 +36,6 @@ No compiler toolchain required — prebuilt binaries are shipped for:
 | Platform            | Triple          |
 |---------------------|-----------------|
 | Windows x64         | `win32-x64`     |
-| macOS Intel         | `darwin-x64`    |
 | macOS Apple Silicon | `darwin-arm64`  |
 | Linux x64           | `linux-x64`     |
 

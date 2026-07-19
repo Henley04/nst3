@@ -4,8 +4,9 @@
 // via node-gyp-build, then re-exports the addon surface.
 //
 // End users never need a C++ toolchain: `npm install nst3` ships prebuilt
-// .node binaries for win32-x64, darwin-x64, darwin-arm64 and linux-x64 inside
-// the npm tarball. If no prebuilt matches the current runtime, node-gyp-build
+// .node binaries for win32-x64, darwin-arm64 and linux-x64 inside the npm
+// tarball. darwin-x64 (Intel Macs) is still supported via source-build
+// fallback. If no prebuilt matches the current runtime, node-gyp-build
 // attempts a `node-gyp rebuild` fallback (requires a toolchain); if that also
 // fails we throw a structured error with code 'VST3_PLATFORM_UNSUPPORTED'.
 

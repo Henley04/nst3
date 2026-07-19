@@ -167,7 +167,6 @@ CI runs on every push and pull request via GitHub Actions (`.github/workflows/CI
 | Runner           | OS                | Triple          |
 |------------------|-------------------|-----------------|
 | `windows-latest` | Windows Server    | `win32-x64`     |
-| `macos-13`       | macOS (Intel)     | `darwin-x64`    |
 | `macos-14`       | macOS (Apple Si)  | `darwin-arm64`  |
 | `ubuntu-latest`  | Ubuntu            | `linux-x64`     |
 

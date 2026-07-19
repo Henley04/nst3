@@ -25,9 +25,6 @@ jobs:
           - os: windows-latest
             arch: x64
             artifact_name: prebuilds-win32-x64
-          - os: macos-13
-            arch: x64
-            artifact_name: prebuilds-darwin-x64
           - os: macos-14
             arch: arm64
             artifact_name: prebuilds-darwin-arm64
@@ -103,15 +100,15 @@ jobs:
           path: prebuilds
           merge-multiple: true
 
-      - name: Verify all 4 platform prebuilds are present
+      - name: Verify all platform prebuilds are present
         run: |
           echo "Prebuilds contents:"
           find prebuilds -type f | sort
           echo
           count=$(find prebuilds -type f -name '*.node' | wc -l)
-          echo "Found $count .node file(s) (expected >= 4)"
-          if [ "$count" -lt 4 ]; then
-            echo "ERROR: Expected at least 4 prebuild .node files, found $count"
+          echo "Found $count .node file(s) (expected >= 3)"
+          if [ "$count" -lt 3 ]; then
+            echo "ERROR: Expected at least 3 prebuild .node files, found $count"
             exit 1
           fi
 
