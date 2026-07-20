@@ -5,6 +5,22 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.1] - 2026-07-20
+
+### Fixed
+
+- **ESM named imports broken on Node 22+** — `import { Host, version } from 'nvst3-host'` failed with `SyntaxError: The requested module 'nvst3-host' does not provide an export named 'Host'`. Root cause: the native addon exposes its surface as N-API properties on the `native` object at load time, which is opaque to Node's `cjs-module-lexer` (the static analyzer that makes `export * from './index.js'` in `index.mjs` re-export named bindings). Fix: add no-op self-references (`exports.X = exports.X`) at the end of `index.js` for every public top-level symbol. This pattern is recognized by `cjs-module-lexer` and re-exported as named ESM bindings, without changing the runtime API.
+
+### Changed
+
+- `files` in `package.json` no longer includes `binding.gyp`, `src/`, or `third_party/`. The previous `third_party/` entry was ineffective (npm publish does not include git submodule contents) and the source-build fallback was therefore broken anyway — users on platforms without a prebuilt binary (e.g. `darwin-x64` / Intel Macs) should clone the GitHub repo with submodules rather than rely on `npm install` to compile from source. Removing the dead fallback files shrinks the published package and makes the failure mode clearer.
+
+### Out of scope (unchanged from 0.3.0)
+
+- UMP / MIDI 2.0, async worker thread, standalone `.vst3` bundle publishing, DAW-style integration test suite, code signing — see [0.3.0] notes for rationale.
+
+[0.3.1]: https://github.com/Henley04/nvst3-host/releases/tag/v0.3.1
+
 ## [0.3.0] - 2026-07-20
 
 ### Audit-driven fixes — Headless-host hardening

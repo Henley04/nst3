@@ -180,3 +180,19 @@ module.exports.SUPPORTED_TRIPLES = SUPPORTED_TRIPLES;
 module.exports._registerInstance = _registerInstance;
 module.exports._unregisterInstance = _unregisterInstance;
 module.exports.default = native;
+
+//--- ESM named-export declarations -------------------------------------
+// The native addon exposes its surface as N-API properties on the `native`
+// object at load time, which is opaque to Node's cjs-module-lexer (the
+// static analyzer that makes `import { Host } from 'nvst3-host'` work via
+// index.mjs). To give the lexer a static list of named exports without
+// polluting the runtime API, we add no-op self-references for every
+// public top-level symbol. This pattern is recognized by cjs-module-lexer
+// and re-exported as named ESM bindings via `export * from './index.js'`
+// in index.mjs.
+exports.version = exports.version;
+exports.Host = exports.Host;
+exports.NstError = exports.NstError;
+exports.supportedTriples = exports.supportedTriples;
+exports.SUPPORTED_TRIPLES = exports.SUPPORTED_TRIPLES;
+exports.default = native;
