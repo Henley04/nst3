@@ -82,6 +82,16 @@ if(APPLE)
     # for the host to dlopen the plugin without a symbol lookup error.
     target_compile_options(Gain PRIVATE -frtti -fexceptions)
     target_compile_definitions(Gain PRIVATE MAC=1 _DEBUG=1 DEVELOPMENT=1)
+    # Install moduleinfo.json into the bundle's Contents/ directory (VST3
+    # 3.6.10+ spec location). MACOSX_PACKAGE_LOCATION=Resources would put
+    # it inside Contents/Resources/, but the spec wants it at Contents/
+    # itself; we use a post-build copy to place it correctly.
+    add_custom_command(TARGET Gain POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/moduleinfo.json"
+                "$<TARGET_BUNDLE_DIR:Gain>/Contents/moduleinfo.json"
+        COMMENT "[Gain] Installing moduleinfo.json into bundle"
+    )
 elseif(UNIX)
     target_sources(Gain PRIVATE ${VST3_SDK_ROOT}/public.sdk/source/main/linuxmain.cpp)
     # Bundle layout on Linux: Gain.vst3/Contents/x86_64-linux/Gain.so
@@ -103,6 +113,15 @@ elseif(UNIX)
         COMMAND ${CMAKE_COMMAND} -E make_directory
                 "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/Resources"
         COMMENT "[Gain] Creating bundle Resources directory"
+    )
+    # Copy moduleinfo.json into the bundle so VST3 3.6.10+ hosts can read
+    # the plugin's class list without loading the .so. Source location is
+    # next to the CMakeLists.txt so it travels with the source tree.
+    add_custom_command(TARGET Gain POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                "${CMAKE_CURRENT_SOURCE_DIR}/moduleinfo.json"
+                "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/moduleinfo.json"
+        COMMENT "[Gain] Installing moduleinfo.json into bundle"
     )
 elseif(WIN32)
     target_sources(Gain PRIVATE ${VST3_SDK_ROOT}/public.sdk/source/main/dllmain.cpp)

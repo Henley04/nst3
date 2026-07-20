@@ -1,9 +1,17 @@
 {
   "name": "nvst3-host",
-  "version": "0.1.0",
+  "version": "0.3.0",
   "description": "Production-grade VST3 host for Node.js — load, automate, and process audio through any VST3 plugin with zero-copy buffers and prebuilt native binaries.",
   "main": "index.js",
   "types": "index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.mjs",
+      "require": "./index.js"
+    },
+    "./package.json": "./package.json"
+  },
   "license": "MIT",
   "author": "Henley Sun <Henley04@users.noreply.github.com>",
   "homepage": "https://github.com/Henley04/nvst3-host",
@@ -31,6 +39,7 @@
   },
   "files": [
     "index.js",
+    "index.mjs",
     "index.d.ts",
     "prebuilds/",
     "binding.gyp",
@@ -47,6 +56,7 @@
   "scripts": {
     "install": "node-gyp-build",
     "build": "node-gyp configure && node-gyp build",
+    "build:asan": "node-gyp configure --asan=true && node-gyp build",
     "rebuild": "node-gyp rebuild",
     "clean": "node-gyp clean",
     "prebuild": "prebuildify --napi-version 8 --tag-armv -t 20.0.0",

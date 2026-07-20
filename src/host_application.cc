@@ -15,6 +15,12 @@
 #include "pluginterfaces/vst/ivstmessage.h"              // IMessage, IAttributeList, IConnectionPoint
 #include "pluginterfaces/vst/ivstunits.h"                // IUnitHandler{,2}
 #include "pluginterfaces/vst/ivstpluginterfacesupport.h" // IPlugInterfaceSupport
+#include "pluginterfaces/base/funknown.h"
+
+// Reuse the SDK's example HostMessage + HostAttributeList implementations
+// for IHostApplication::createInstance("IMessage"/"IAttributeList"). These
+// are exactly what the SDK HostApplication base class returned previously.
+#include "public.sdk/source/vst/hosting/hostclasses.h"
 
 namespace nst3 {
 
@@ -67,21 +73,17 @@ NstPlugInterfaceSupport::~NstPlugInterfaceSupport() noexcept = default;
 // NstHostApplication
 //------------------------------------------------------------------------
 NstHostApplication::NstHostApplication() {
-    // The SDK's HostApplication base-class constructor already creates a
-    // default PlugInterfaceSupport that advertises the standard non-GUI VST3
-    // interfaces (IComponent, IAudioProcessor, IEditController, IConnectionPoint,
-    // IUnitInfo, IUnitData, IProgramListData, IMidiMapping, IEditController2).
-    // The base class does not expose a setPlugInterfaceSupport() setter, so
-    // we cannot install our own curated list. The default is appropriate for
-    // nst3's non-GUI hosting model — GUI-only interfaces (IPlugView,
-    // IPlugFrame, IPlugViewContentScaleSupport) are not advertised by the
-    // default PlugInterfaceSupport, matching nst3's no-editor-embedding scope.
+    // Construct our curated PlugInterfaceSupport up front. This replaces the
+    // previous approach of subclassing Steinberg::Vst::HostApplication and
+    // trying to reassign its (private) mPlugInterfaceSupport member, which
+    // never compiled.
+    nstPlugInterfaceSupport_ = Steinberg::owned(new NstPlugInterfaceSupport());
 }
 
 NstHostApplication::~NstHostApplication() noexcept {
-    // HostApplication base class dtor is responsible for releasing the
-    // PlugInterfaceSupport held in its internal IPtr. We just clear our raw
-    // pointer to the component handler (the handler is owned elsewhere).
+    // Drop our strong reference. Any plugin still holding a reference to the
+    // IPlugInterfaceSupport (obtained via queryInterface) keeps it alive
+    // through its own IPtr.
     handler_ = nullptr;
     nstPlugInterfaceSupport_.reset();
 }
@@ -91,6 +93,69 @@ Steinberg::tresult PLUGIN_API NstHostApplication::getName(Steinberg::Vst::String
     static const std::string kHostName = "Node.js VST3 Host";
     utf8ToString128(kHostName, name);
     return Steinberg::kResultTrue;
+}
+
+Steinberg::tresult PLUGIN_API NstHostApplication::createInstance(Steinberg::TUID cid,
+                                                                Steinberg::TUID _iid,
+                                                                void** obj) {
+    if (!obj) return Steinberg::kInvalidArgument;
+    *obj = nullptr;
+
+    // Reuse the SDK's example HostMessage / HostAttributeList so plugins get
+    // the same IMessage / IAttributeList implementation the SDK HostApplication
+    // would have returned. We construct them directly here (instead of
+    // delegating to the base class) because we no longer inherit from
+    // HostApplication.
+    if (Steinberg::FUnknownPrivate::iidEqual(cid, Steinberg::Vst::IMessage::iid) &&
+        Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Vst::IMessage::iid)) {
+        auto* msg = new Steinberg::Vst::HostMessage;
+        msg->addRef(); // queryInterface contract: returned with refcount bump
+        *obj = msg;
+        return Steinberg::kResultTrue;
+    }
+    if (Steinberg::FUnknownPrivate::iidEqual(cid, Steinberg::Vst::IAttributeList::iid) &&
+        Steinberg::FUnknownPrivate::iidEqual(_iid, Steinberg::Vst::IAttributeList::iid)) {
+        if (auto al = Steinberg::Vst::HostAttributeList::make()) {
+            *obj = al.take();
+            return Steinberg::kResultTrue;
+        }
+        return Steinberg::kOutOfMemory;
+    }
+    return Steinberg::kResultFalse;
+}
+
+Steinberg::tresult PLUGIN_API NstHostApplication::queryInterface(const Steinberg::TUID _iid,
+                                                                 void** obj) {
+    if (!obj) return Steinberg::kInvalidArgument;
+    *obj = nullptr;
+
+    // Standard FUnknown interfaces.
+    QUERY_INTERFACE(_iid, obj, Steinberg::FUnknown::iid, Steinberg::FUnknown)
+    QUERY_INTERFACE(_iid, obj, Steinberg::Vst::IHostApplication::iid,
+                    Steinberg::Vst::IHostApplication)
+
+    // Forward to our curated PlugInterfaceSupport so plugins querying for
+    // IPlugInterfaceSupport obtain it directly from the host context —
+    // this is exactly what the SDK HostApplication base class did.
+    if (nstPlugInterfaceSupport_ &&
+        nstPlugInterfaceSupport_->queryInterface(_iid, obj) == Steinberg::kResultTrue) {
+        return Steinberg::kResultOk;
+    }
+
+    *obj = nullptr;
+    return Steinberg::kNoInterface;
+}
+
+Steinberg::uint32 PLUGIN_API NstHostApplication::addRef() {
+    // Singleton-style: lifetime is owned by the Host JS wrapper, not by COM.
+    // Matches Steinberg::Vst::HostApplication::addRef() behavior.
+    return 1;
+}
+
+Steinberg::uint32 PLUGIN_API NstHostApplication::release() {
+    // Singleton-style: see addRef() comment. Never let refcount drop to 0
+    // through COM release, since the Host JS wrapper owns the C++ instance.
+    return 1;
 }
 
 } // namespace nst3

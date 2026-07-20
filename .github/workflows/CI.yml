@@ -21,6 +21,23 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
+        # GitHub Actions runner availability (as of 2026):
+        #   - windows-latest         → x64  (win32-x64)  ✓ available
+        #   - windows-11-arm         → arm64 (win32-arm64) public preview
+        #   - macos-14 / macos-15    → arm64 (darwin-arm64) ✓ available
+        #   - macos-13 (Intel x64)  → DEPRECATED — GitHub removed Intel macOS
+        #                              runners in late 2025. darwin-x64 prebuilds
+        #                              can only be produced via cross-compilation
+        #                              (e.g. `arch -x86_64` on an arm64 host),
+        #                              which is not viable in CI. Users on Intel
+        #                              Macs must build from source with a local
+        #                              toolchain.
+        #   - ubuntu-latest          → x64  (linux-x64)  ✓ available
+        #   - ubuntu-24.04-arm       → arm64 (linux-arm64) ✓ available (GA)
+        #
+        # win32-ia32 (32-bit Windows) is NOT supported — no GitHub runner
+        # produces 32-bit Windows binaries, and modern VST3 plugins are
+        # universally 64-bit anyway.
         include:
           - os: windows-latest
             arch: x64
@@ -31,6 +48,9 @@ jobs:
           - os: ubuntu-latest
             arch: x64
             artifact_name: prebuilds-linux-x64
+          - os: ubuntu-24.04-arm
+            arch: arm64
+            artifact_name: prebuilds-linux-arm64
 
     steps:
       - name: Checkout (with VST3 SDK submodule)
@@ -68,6 +88,19 @@ jobs:
 
       - name: Run integration tests
         run: npm test
+
+      - name: Run VST3 Validator on test plugin (Linux x64 only)
+        if: runner.os == 'Linux' && matrix.arch == 'x64'
+        run: |
+          # Validate the test plugin using the SDK's validator if available.
+          # This catches VST3 spec compliance issues that the runtime tests
+          # do not exercise (e.g. parameter value ranges, bus activation
+          # transitions, message handling edge cases).
+          if command -v validator >/dev/null 2>&1; then
+            validator "$PWD/test/plugin/build/Gain.vst3"
+          else
+            echo "VST3 validator binary not on PATH — skipping (install Steinberg VST3 SDK validator to enable)"
+          fi
 
       - name: Create prebuilds
         run: npx prebuildify --napi-version 8 --tag-armv -t 20.0.0
@@ -120,9 +153,9 @@ jobs:
           find prebuilds -type f | sort
           echo
           count=$(find prebuilds -type f -name '*.node' | wc -l)
-          echo "Found $count .node file(s) (expected >= 3)"
-          if [ "$count" -lt 3 ]; then
-            echo "ERROR: Expected at least 3 prebuild .node files, found $count"
+          echo "Found $count .node file(s) (expected >= 4)"
+          if [ "$count" -lt 4 ]; then
+            echo "ERROR: Expected at least 4 prebuild .node files (win32-x64, darwin-arm64, linux-x64, linux-arm64), found $count"
             exit 1
           fi
 

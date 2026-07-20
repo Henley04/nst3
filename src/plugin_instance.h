@@ -97,6 +97,17 @@ public:
     //--- Info / options -------------------------------------------------
     Napi::Value GetInfo(const Napi::CallbackInfo& info);
     Napi::Value GetLatency(const Napi::CallbackInfo& info);
+    // Debug-friendly comprehensive snapshot: combines getInfo() with latency,
+    // tail samples, sample-size capability, current processing state, and
+    // all bus info (input + output). One call returns everything a debugger
+    // or log-line needs to describe the live plugin state.
+    Napi::Value GetPluginInfo(const Napi::CallbackInfo& info);
+    // Full parameter tree in a single call: every parameter's info plus its
+    // current normalized value, grouped by unit (when IUnitInfo is available;
+    // otherwise all parameters live under a synthetic root unit). Useful for
+    // dumping the entire parameter state for debugging or for building
+    // generic UIs without iterating getParameterInfo / getParameter in JS.
+    Napi::Value GetParameterTree(const Napi::CallbackInfo& info);
 
     //--- Audio processing -----------------------------------------------
     Napi::Value SetActive(const Napi::CallbackInfo& info);
@@ -170,6 +181,12 @@ public:
     // Allow JS users to drive tempo, time signature, transport state, etc.
     Napi::Value SetProcessContext(const Napi::CallbackInfo& info);
     Napi::Value GetProcessContext(const Napi::CallbackInfo& info);
+    // Set the cached wall-clock timestamp (nanoseconds since epoch) used by
+    // process() to populate ProcessContext.systemTime when kSystemTimeValid
+    // is set. Real-time safe: writes a std::atomic<int64_t> from a non-RT
+    // thread; process() reads it with memory_order_relaxed. Pass 0 to
+    // disable systemTime population on subsequent blocks.
+    Napi::Value SetSystemTime(const Napi::CallbackInfo& info);
 
     //--- IProcessContextRequirements ----------------------------------
     Napi::Value GetProcessContextRequirements(const Napi::CallbackInfo& info);
@@ -329,6 +346,16 @@ private:
 
     // ProcessContext reused across calls; sample position advances per block.
     Steinberg::Vst::ProcessContext processContext_;
+
+    // Cached wall-clock timestamp (nanoseconds since epoch). Updated from a
+    // non-RT thread via setSystemTime() / setProcessContext({ systemTime }).
+    // Read by process() when kSystemTimeValid is set — never via syscall.
+    // Real-time audio thread safety: load(memory_order_relaxed) is safe on
+    // every supported platform (atomic int64 reads are tear-free on x86_64
+    // and arm64; std::atomic<int64_t> is always lock-free on these targets).
+    std::atomic<int64_t> cachedSystemTimeNs_{0};
+    static_assert(std::atomic<int64_t>::is_always_lock_free,
+                  "int64 atomic must be lock-free on supported targets");
 
     // Parameter changes (input + output)
     Steinberg::Vst::ParameterChanges inputParams_;
