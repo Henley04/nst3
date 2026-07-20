@@ -6,8 +6,38 @@
 
 #include <algorithm>
 #include <cstring>
+#include <codecvt>
+#include <locale>
+
+#include "string_convert.h"
+
+// HostAttributeList (SDK example IAttributeList impl) for lazy getAttributes().
+#include "public.sdk/source/vst/hosting/hostclasses.h"
+// PresetAttributes::kStateType / kFilePathStringType keys for the convenience
+// mutators setStateType / setFilePath.
+#include "pluginterfaces/vst/vstpresetkeys.h"
 
 namespace nst3 {
+
+namespace {
+// UTF-8 -> std::u16string (variable-length, used for file paths which can
+// exceed String128's 127-character capacity). Mirrors the converter in
+// string_convert.cc but returns a dynamic-length u16string.
+std::u16string utf8ToU16(const std::string& src) {
+    try {
+        static std::wstring_convert<std::codecvt_utf8_utf16<char16_t>, char16_t> conv;
+        return conv.from_bytes(src);
+    } catch (...) {
+        // Fallback: ASCII-only truncation if codecvt fails.
+        std::u16string out;
+        out.reserve(src.size());
+        for (unsigned char ch : src) {
+            out.push_back(static_cast<char16_t>(ch < 128 ? ch : u'?'));
+        }
+        return out;
+    }
+}
+} // namespace
 
 BufferStream::BufferStream() = default;
 
@@ -69,6 +99,78 @@ Steinberg::tresult PLUGIN_API BufferStream::tell(Steinberg::int64* pos) {
     if (!pos) return Steinberg::kInvalidArgument;
     *pos = static_cast<Steinberg::int64>(pos_);
     return Steinberg::kResultTrue;
+}
+
+//------------------------------------------------------------------------
+// IStreamAttributes
+//------------------------------------------------------------------------
+// Plugins obtain IStreamAttributes via FUnknownPtr<IStreamAttributes>(stream)
+// inside setState/getState to probe the loading context. We implement both
+// methods minimally: getFileName returns the host-supplied UTF-8 name (empty
+// by default), getAttributes lazily allocates an SDK HostAttributeList that
+// host-side mutators (setStateType, setFilePath, or direct attribute writes)
+// can populate before handing the stream to the plugin.
+
+Steinberg::tresult PLUGIN_API BufferStream::getFileName(Steinberg::Vst::String128 name) {
+    if (!name) return Steinberg::kInvalidArgument;
+    // Convert the cached UTF-8 name to a null-terminated String128 (UTF-16).
+    utf8ToString128(utf8FileName_, name);
+    return Steinberg::kResultTrue;
+}
+
+Steinberg::Vst::IAttributeList* PLUGIN_API BufferStream::getAttributes() {
+    if (!attributes_) {
+        // Lazy-create on first query. HostAttributeList::make() returns an
+        // IPtr<IAttributeList> with refcount=1; we store it as a strong
+        // reference so subsequent calls return the same instance.
+        if (auto al = Steinberg::Vst::HostAttributeList::make()) {
+            attributes_ = al;
+        }
+        // On allocation failure, leave attributes_ null. Plugins must handle
+        // a nullptr return from getAttributes gracefully per the SDK contract.
+    }
+    return attributes_;
+}
+
+//------------------------------------------------------------------------
+// Host-side mutators
+//------------------------------------------------------------------------
+void BufferStream::setFileName(const std::string& utf8Name) {
+    utf8FileName_ = utf8Name;
+}
+
+bool BufferStream::setStateType(const std::string& utf8StateType) {
+    if (auto* al = getAttributes()) {
+        auto u16 = utf8ToU16(utf8StateType);
+        // StateType strings are short ("Project", "Default", "TrackPreset")
+        // — a 256-char fixed buffer is more than enough. setString requires
+        // a null-terminated TChar buffer.
+        Steinberg::Vst::TChar buf[256];
+        size_t n = u16.size();
+        if (n > 255) n = 255;
+        for (size_t i = 0; i < n; ++i) {
+            buf[i] = static_cast<Steinberg::Vst::TChar>(u16[i]);
+        }
+        buf[n] = 0;
+        return al->setString(Steinberg::Vst::PresetAttributes::kStateType, buf) == Steinberg::kResultTrue;
+    }
+    return false;
+}
+
+bool BufferStream::setFilePath(const std::string& utf8Path) {
+    if (auto* al = getAttributes()) {
+        auto u16 = utf8ToU16(utf8Path);
+        // File paths can be long (SDK example uses 1024 chars); allocate
+        // a dynamic buffer to avoid the 256-char truncation of setStateType.
+        std::vector<Steinberg::Vst::TChar> buf(u16.size() + 1);
+        for (size_t i = 0; i < u16.size(); ++i) {
+            buf[i] = static_cast<Steinberg::Vst::TChar>(u16[i]);
+        }
+        buf[u16.size()] = 0;
+        return al->setString(Steinberg::Vst::PresetAttributes::kFilePathStringType,
+                             buf.data()) == Steinberg::kResultTrue;
+    }
+    return false;
 }
 
 //------------------------------------------------------------------------

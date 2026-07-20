@@ -10,7 +10,11 @@
         "NAPI_CPP_EXCEPTIONS",
         "NODE_ADDON_API_DISABLE_DEPRECATED",
         "DEVELOPMENT_ENVIRONMENT=1",
-        "RELEASE=1"
+        "RELEASE=1",
+        # SMTG_CPP_17: enables std::u16string_view variants in vstbus.h when
+        # the host is built with C++17 (we compile with -std=c++17). Without
+        # this macro the SDK falls back to const std::u16string& copies.
+        "SMTG_CPP_17=1"
       ],
       "include_dirs": [
         "<!(node -p \"require('node-addon-api').include_dir\")",

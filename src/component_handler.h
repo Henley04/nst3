@@ -8,6 +8,7 @@
 
 #include <atomic>
 #include <functional>
+#include <mutex>
 #include <unordered_set>
 
 #include "pluginterfaces/base/funknownimpl.h"
@@ -119,9 +120,12 @@ private:
 
     // Active gesture tracking: parameter IDs with an open beginEdit gesture.
     // Used by future automation recording to attribute performEdit points to
-    // their enclosing gesture. No mutex — gesture calls come from the
-    // controller thread (which is the JS thread in this host).
+    // their enclosing gesture. Guarded by gesturesMutex_ because begin/endEdit
+    // can be invoked from the controller thread OR from a thread spawned by
+    // the plugin itself (e.g. UI thread, MIDI clock thread) — the VST3 spec
+    // does not constrain the calling thread for these methods.
     std::unordered_set<Steinberg::Vst::ParamID> activeGestures_;
+    mutable std::mutex gesturesMutex_;
 
     // Plugin→host event callback (dirty, beginGesture, endGesture, startGroup,
     // finishGroup). Invoked from any thread; the callback is responsible for

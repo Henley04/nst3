@@ -18,7 +18,10 @@ Steinberg::tresult PLUGIN_API ComponentHandler::beginEdit(Steinberg::Vst::ParamI
     // the active gesture in activeGestures_ so future automation recording can
     // attribute subsequent performEdit points to the right gesture, and emit a
     // 'beginGesture' JS event so the host can react (e.g. start recording).
-    activeGestures_.insert(id);
+    {
+        std::lock_guard<std::mutex> lk(gesturesMutex_);
+        activeGestures_.insert(id);
+    }
     if (hostEventCb_) {
         hostEventCb_({ "beginGesture", static_cast<double>(id), /*isBool*/ false,
                        /*hasPayload*/ true });
@@ -43,7 +46,10 @@ Steinberg::tresult PLUGIN_API ComponentHandler::performEdit(
 Steinberg::tresult PLUGIN_API ComponentHandler::endEdit(Steinberg::Vst::ParamID id) {
     // endEdit marks the end of an automation gesture. Remove from the active
     // set and emit an 'endGesture' JS event.
-    activeGestures_.erase(id);
+    {
+        std::lock_guard<std::mutex> lk(gesturesMutex_);
+        activeGestures_.erase(id);
+    }
     if (hostEventCb_) {
         hostEventCb_({ "endGesture", static_cast<double>(id), /*isBool*/ false,
                        /*hasPayload*/ true });

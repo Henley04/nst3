@@ -30,7 +30,7 @@ It is built on the **official Steinberg VST3 SDK (v3.8.0, MIT-licensed)** and sh
 - **Accurate PlugInterfaceSupport** — the host advertises exactly the 13 interfaces it implements via a custom `IPlugInterfaceSupport` (no GUI-only interfaces such as `IPlugView` / `IPlugFrame`).
 - **Plugin→host events** — `on('restart')`, `on('dirty')`, `on('beginGesture')`, `on('endGesture')`, `on('startGroup')`, `on('finishGroup')`, all delivered safely across threads via a `Napi::ThreadSafeFunction`.
 - **Error handling** — typed `NstError` with `code`, `cause`, `runtimeTriple`, and `supportedTriples` fields; 14 stable error codes covering load, activation, processing, state, MIDI, platform, and unexpected-fault conditions.
-- **Cross-platform prebuilt binaries** — `npm install nvst3-host` ships native `.node` files via `prebuildify` for `darwin-x64`, `darwin-arm64`, `linux-x64`, `linux-arm64`, `win32-x64`, and `win32-ia32`; no toolchain needed for end users.
+- **Cross-platform prebuilt binaries** — `npm install nvst3-host` ships native `.node` files via `prebuildify` for `win32-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64`. No toolchain needed for end users.
 - **MIT-licensed end-to-end** — both `nvst3-host` and the bundled VST3 SDK are MIT-licensed (since SDK v3.7.7), so there are no licensing concerns for commercial or closed-source use.
 - **Strong TypeScript types** — a hand-written `index.d.ts` mirrors the native surface 1:1, including all 14 enums and full JSDoc, for editor IntelliSense.
 
@@ -42,11 +42,19 @@ npm install nvst3-host
 
 No compiler toolchain required — prebuilt binaries are shipped for:
 
-| Platform            | Triple          |
-|---------------------|-----------------|
-| Windows x64         | `win32-x64`     |
-| macOS Apple Silicon | `darwin-arm64`  |
-| Linux x64           | `linux-x64`     |
+| Platform            | Triple          | Build Method                          |
+|---------------------|-----------------|---------------------------------------|
+| Windows x64         | `win32-x64`     | GitHub Actions (`windows-latest`)     |
+| macOS Apple Silicon | `darwin-arm64`  | GitHub Actions (`macos-14`)           |
+| Linux x64           | `linux-x64`     | GitHub Actions (`ubuntu-latest`)      |
+| Linux ARM64         | `linux-arm64`   | GitHub Actions (`ubuntu-24.04-arm`)   |
+
+> **Note on Intel Macs and Windows x86**: GitHub Actions no longer provides
+> `darwin-x64` (Intel macOS) runners as of late 2025 — those runners were
+> deprecated and removed. `win32-ia32` (32-bit Windows) was never supported
+> in CI and modern VST3 plugins are universally 64-bit. Users on Intel
+> Macs can build from source via `npm install` (which falls back to
+> `node-gyp rebuild`) — see [Building from Source](#building-from-source).
 
 If no prebuilt binary matches your runtime, `node-gyp-build` automatically falls back to a source build (`node-gyp rebuild`) — this requires Node.js headers and a C++17 compiler.
 
@@ -129,7 +137,7 @@ const { Host } = require('nvst3-host');
 Obtained from `host.load(...)`. Never call `new PluginInstance(...)` directly.
 
 - **Lifecycle**: `dispose()`, `[Symbol.dispose]()`, `on('restart', cb)`
-- **Metadata**: `getInfo()`, `getLatency()`
+- **Metadata**: `getInfo()`, `getPluginInfo()` (debug snapshot with full state + buses + interfaces), `getParameterTree()` (all parameters grouped by unit with current values), `getLatency()`
 - **Processing**: `setActive(bool)`, `setProcessing(bool)`, `process({ inputs, outputs, numSamples })`
 - **Parameters**: `getParameterCount()`, `getParameterInfo(index)`, `getParameter(id)`, `setParameter(id, value)`, `setParameters(changes)`, `formatParameter(id, value)`
 - **MIDI**: `addMidiEvent(event)`, `addMidiBytes(sampleOffset, bytes)`, `takeOutputEvents()`, `clearEvents()`

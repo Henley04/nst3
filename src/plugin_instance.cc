@@ -7,7 +7,6 @@
 #include <cstring>
 #include <algorithm>
 #include <cmath>
-#include <chrono>
 #include <limits>
 #include <sstream>
 
@@ -42,6 +41,8 @@ Napi::Object PluginInstance::Init(Napi::Env env, Napi::Object exports) {
     Napi::Function func = DefineClass(env, "PluginInstance", {
         InstanceMethod("dispose", &PluginInstance::Dispose),
         InstanceMethod("getInfo", &PluginInstance::GetInfo),
+        InstanceMethod("getPluginInfo", &PluginInstance::GetPluginInfo),
+        InstanceMethod("getParameterTree", &PluginInstance::GetParameterTree),
         InstanceMethod("getLatency", &PluginInstance::GetLatency),
         InstanceMethod("setActive", &PluginInstance::SetActive),
         InstanceMethod("setProcessing", &PluginInstance::SetProcessing),
@@ -97,6 +98,7 @@ Napi::Object PluginInstance::Init(Napi::Env env, Napi::Object exports) {
         //--- Process context -------------------------------------------
         InstanceMethod("setProcessContext", &PluginInstance::SetProcessContext),
         InstanceMethod("getProcessContext", &PluginInstance::GetProcessContext),
+        InstanceMethod("setSystemTime", &PluginInstance::SetSystemTime),
         //--- IProcessContextRequirements --------------------------------
         InstanceMethod("getProcessContextRequirements", &PluginInstance::GetProcessContextRequirements),
         //--- IAudioPresentationLatency ---------------------------------
@@ -780,6 +782,289 @@ Napi::Value PluginInstance::GetLatency(const Napi::CallbackInfo& info) {
     return Napi::Number::New(env, static_cast<double>(latency));
 }
 
+Napi::Value PluginInstance::GetPluginInfo(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    checkAlive();
+    Napi::Object o = Napi::Object::New(env);
+
+    // --- Static info (mirrors getInfo()) ----------------------------------
+    o.Set("name", Napi::String::New(env, info_.name));
+    o.Set("vendor", Napi::String::New(env, info_.vendor));
+    o.Set("version", Napi::String::New(env, info_.version));
+    o.Set("category", Napi::String::New(env, info_.category));
+    o.Set("subCategories", Napi::String::New(env, info_.subCategories));
+    o.Set("sdkVersion", Napi::String::New(env, info_.sdkVersion));
+    o.Set("classId", Napi::String::New(env, info_.classId));
+
+    // --- Counts -----------------------------------------------------------
+    o.Set("numAudioInputs", Napi::Number::New(env, info_.numAudioInputs));
+    o.Set("numAudioOutputs", Napi::Number::New(env, info_.numAudioOutputs));
+    o.Set("numMidiInputs", Napi::Number::New(env, info_.numMidiInputs));
+    o.Set("numMidiOutputs", Napi::Number::New(env, info_.numMidiOutputs));
+    o.Set("parameterCount", Napi::Number::New(env, info_.parameterCount));
+    o.Set("hasController", Napi::Boolean::New(env, info_.hasController));
+    o.Set("isSingleComponent", Napi::Boolean::New(env, info_.isSingleComponent));
+
+    // --- Live state -------------------------------------------------------
+    o.Set("active", Napi::Boolean::New(env, active_));
+    o.Set("processing", Napi::Boolean::New(env, processing_));
+    o.Set("faulted", Napi::Boolean::New(env, faulted_));
+    o.Set("disposed", Napi::Boolean::New(env, disposed_.load(std::memory_order_relaxed)));
+    o.Set("sampleSize", Napi::Number::New(env, activeSampleSize_));
+    o.Set("processMode", Napi::Number::New(env, processMode_));
+    o.Set("sampleRate", Napi::Number::New(env, opts_.sampleRate));
+    o.Set("maxBlockSize", Napi::Number::New(env, opts_.maxBlockSize));
+
+    // --- Latency / tail / sample-size capability --------------------------
+    if (audioProcessor_) {
+        o.Set("latencySamples",
+              Napi::Number::New(env, static_cast<double>(audioProcessor_->getLatencySamples())));
+        Steinberg::uint32 tail = audioProcessor_->getTailSamples();
+        if (tail == 0xFFFFFFFFu /* kInfiniteTail */) {
+            o.Set("tailSamples", Napi::Number::New(env, std::numeric_limits<double>::infinity()));
+        } else {
+            o.Set("tailSamples", Napi::Number::New(env, static_cast<double>(tail)));
+        }
+        // canProcessSampleSize probes — useful for debug to see what the
+        // plugin actually claimed to support.
+        bool can32 = audioProcessor_->canProcessSampleSize(Steinberg::Vst::kSample32)
+                     == Steinberg::kResultTrue;
+        bool can64 = audioProcessor_->canProcessSampleSize(Steinberg::Vst::kSample64)
+                     == Steinberg::kResultTrue;
+        o.Set("canProcessSample32", Napi::Boolean::New(env, can32));
+        o.Set("canProcessSample64", Napi::Boolean::New(env, can64));
+    }
+
+    // --- Buses (audio input / output + event input / output) ---------------
+    auto emitBuses = [&](Steinberg::Vst::MediaType mt, Steinberg::Vst::BusDirection dir,
+                          const char* key) {
+        if (!component_) {
+            o.Set(key, Napi::Array::New(env, 0));
+            return;
+        }
+        Steinberg::int32 count = component_->getBusCount(mt, dir);
+        Napi::Array arr = Napi::Array::New(env, static_cast<size_t>(std::max(0, count)));
+        for (Steinberg::int32 i = 0; i < count; ++i) {
+            Steinberg::Vst::BusInfo bi;
+            std::memset(&bi, 0, sizeof(bi));
+            if (component_->getBusInfo(mt, dir, i, bi) != Steinberg::kResultTrue) continue;
+            Napi::Object b = Napi::Object::New(env);
+            b.Set("index", Napi::Number::New(env, static_cast<double>(i)));
+            b.Set("name", Napi::String::New(env, string128ToUtf8(bi.name)));
+            b.Set("channelCount", Napi::Number::New(env, static_cast<double>(bi.channelCount)));
+            b.Set("busType", Napi::Number::New(env, static_cast<double>(bi.busType)));
+            b.Set("flags", Napi::Number::New(env, static_cast<double>(bi.flags)));
+            bool isActive = true;
+            if (mt == Steinberg::Vst::kAudio) {
+                const auto& vec = (dir == Steinberg::Vst::kInput)
+                    ? inputBusInfos_ : outputBusInfos_;
+                if (static_cast<size_t>(i) < vec.size()) {
+                    isActive = vec[static_cast<size_t>(i)].isActive;
+                }
+            }
+            b.Set("active", Napi::Boolean::New(env, isActive));
+            if (mt == Steinberg::Vst::kAudio && audioProcessor_) {
+                Steinberg::Vst::SpeakerArrangement spkArr = 0;
+                audioProcessor_->getBusArrangement(dir, i, spkArr);
+                b.Set("speakerArrangement", Napi::Number::New(env, static_cast<double>(spkArr)));
+            }
+            arr[static_cast<uint32_t>(i)] = b;
+        }
+        o.Set(key, arr);
+    };
+    emitBuses(Steinberg::Vst::kAudio, Steinberg::Vst::kInput, "audioInputBuses");
+    emitBuses(Steinberg::Vst::kAudio, Steinberg::Vst::kOutput, "audioOutputBuses");
+    emitBuses(Steinberg::Vst::kEvent, Steinberg::Vst::kInput, "eventInputBuses");
+    emitBuses(Steinberg::Vst::kEvent, Steinberg::Vst::kOutput, "eventOutputBuses");
+
+    // --- Optional interface availability ---------------------------------
+    Napi::Object ifaces = Napi::Object::New(env);
+    ifaces.Set("midiMapping", Napi::Boolean::New(env, midiMapping_ != nullptr));
+    ifaces.Set("unitInfo", Napi::Boolean::New(env, unitInfo_ != nullptr));
+    ifaces.Set("programListData", Napi::Boolean::New(env, programListData_ != nullptr));
+    ifaces.Set("unitData", Napi::Boolean::New(env, unitData_ != nullptr));
+    ifaces.Set("noteExpression", Napi::Boolean::New(env, noteExpr_ != nullptr));
+    ifaces.Set("keyswitchController", Napi::Boolean::New(env, keyswitchCtrl_ != nullptr));
+    ifaces.Set("processContextRequirements",
+              Napi::Boolean::New(env, processContextReqs_ != nullptr));
+    ifaces.Set("audioPresentationLatency", Napi::Boolean::New(env, audioPresLatency_ != nullptr));
+    ifaces.Set("prefetchableSupport", Napi::Boolean::New(env, prefetchable_ != nullptr));
+    ifaces.Set("channelContextInfoListener", Napi::Boolean::New(env, infoListener_ != nullptr));
+    ifaces.Set("editController2", Napi::Boolean::New(env, editController2_ != nullptr));
+    o.Set("interfaces", ifaces);
+
+    return o;
+}
+
+Napi::Value PluginInstance::GetParameterTree(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    checkAlive();
+    if (!controller_) throwNapiError(env, ErrorCode::Unknown, "No edit controller");
+
+    // Build a map of unitId -> unit info, plus a "root" entry for parameters
+    // whose unitId does not match any declared unit (or when the plugin does
+    // not implement IUnitInfo at all).
+    struct UnitEntry {
+        Steinberg::Vst::UnitID id;
+        std::string name;
+        Steinberg::Vst::UnitID parentId;
+        std::vector<Steinberg::int32> programListIndices;
+    };
+    std::vector<UnitEntry> units;
+    bool hasUnits = false;
+    if (unitInfo_) {
+        Steinberg::int32 unitCount = unitInfo_->getUnitCount();
+        hasUnits = unitCount > 0;
+        for (Steinberg::int32 i = 0; i < unitCount; ++i) {
+            Steinberg::Vst::UnitInfo ui;
+            std::memset(&ui, 0, sizeof(ui));
+            if (unitInfo_->getUnitInfo(i, ui) != Steinberg::kResultTrue) continue;
+            UnitEntry e;
+            e.id = ui.id;
+            e.name = string128ToUtf8(ui.name);
+            e.parentId = ui.parentUnitId;
+            // programListInfo for this unit (may be absent / kNoParentUnit)
+            Steinberg::int32 plCount = unitInfo_->getProgramListCount();
+            for (Steinberg::int32 p = 0; p < plCount; ++p) {
+                Steinberg::Vst::ProgramListInfo pli;
+                std::memset(&pli, 0, sizeof(pli));
+                if (unitInfo_->getProgramListInfo(p, pli) != Steinberg::kResultTrue) continue;
+                // There is no direct API to map unit->programList; the SDK
+                // expects the host to call getUnitByBusInfo / similar. We
+                // simply list all program lists under the root unit (id 0)
+                // for debug visibility.
+                if (ui.id == 0 /* root */) {
+                    e.programListIndices.push_back(p);
+                }
+            }
+            units.push_back(std::move(e));
+        }
+    }
+    if (units.empty()) {
+        // Synthetic root unit so the tree always has at least one node.
+        UnitEntry root;
+        root.id = 0;
+        root.name = "Root";
+        root.parentId = Steinberg::Vst::kRootUnitId;
+        units.push_back(std::move(root));
+    }
+
+    // Group parameters by their declared unitId. Parameters whose unitId does
+    // not match any unit are placed under the synthetic root node (units[0]
+    // when no IUnitInfo, or under unit 0 / kRootUnit otherwise).
+    std::map<Steinberg::Vst::UnitID, std::vector<Steinberg::int32>> paramsByUnit;
+    Steinberg::int32 paramCount = controller_->getParameterCount();
+    for (Steinberg::int32 i = 0; i < paramCount; ++i) {
+        Steinberg::Vst::ParameterInfo pi;
+        std::memset(&pi, 0, sizeof(pi));
+        if (controller_->getParameterInfo(i, pi) != Steinberg::kResultTrue) continue;
+        paramsByUnit[pi.unitId].push_back(i);
+    }
+
+    auto unitById = [&](Steinberg::Vst::UnitID id) -> int {
+        for (size_t i = 0; i < units.size(); ++i) {
+            if (units[i].id == id) return static_cast<int>(i);
+        }
+        return -1;
+    };
+
+    // Build the JS array of unit nodes with nested parameters.
+    Napi::Array unitArr = Napi::Array::New(env, units.size());
+    for (size_t u = 0; u < units.size(); ++u) {
+        const auto& ue = units[u];
+        Napi::Object un = Napi::Object::New(env);
+        un.Set("id", Napi::Number::New(env, static_cast<double>(ue.id)));
+        un.Set("name", Napi::String::New(env, ue.name));
+        un.Set("parentId", Napi::Number::New(env, static_cast<double>(ue.parentId)));
+
+        // Program lists under this unit (only populated for root, see above).
+        if (!ue.programListIndices.empty() && unitInfo_) {
+            Napi::Array plists = Napi::Array::New(env, ue.programListIndices.size());
+            for (size_t k = 0; k < ue.programListIndices.size(); ++k) {
+                Steinberg::Vst::ProgramListInfo pli;
+                std::memset(&pli, 0, sizeof(pli));
+                if (unitInfo_->getProgramListInfo(ue.programListIndices[k], pli)
+                    != Steinberg::kResultTrue) continue;
+                Napi::Object pl = Napi::Object::New(env);
+                pl.Set("id", Napi::Number::New(env, static_cast<double>(pli.id)));
+                pl.Set("name", Napi::String::New(env, string128ToUtf8(pli.name)));
+                pl.Set("programCount", Napi::Number::New(env, static_cast<double>(pli.programCount)));
+                plists[static_cast<uint32_t>(k)] = pl;
+            }
+            un.Set("programLists", plists);
+        }
+
+        // Parameters belonging to this unit.
+        auto it = paramsByUnit.find(ue.id);
+        Napi::Array params = Napi::Array::New(env, it == paramsByUnit.end() ? 0 : it->second.size());
+        if (it != paramsByUnit.end()) {
+            for (size_t k = 0; k < it->second.size(); ++k) {
+                Steinberg::int32 idx = it->second[k];
+                Steinberg::Vst::ParameterInfo pi;
+                std::memset(&pi, 0, sizeof(pi));
+                if (controller_->getParameterInfo(idx, pi) != Steinberg::kResultTrue) continue;
+                Napi::Object p = Napi::Object::New(env);
+                p.Set("index", Napi::Number::New(env, static_cast<double>(idx)));
+                p.Set("id", Napi::Number::New(env, static_cast<double>(pi.id)));
+                p.Set("title", Napi::String::New(env, string128ToUtf8(pi.title)));
+                p.Set("shortTitle", Napi::String::New(env, string128ToUtf8(pi.shortTitle)));
+                p.Set("units", Napi::String::New(env, string128ToUtf8(pi.units)));
+                p.Set("stepCount", Napi::Number::New(env, pi.stepCount));
+                p.Set("defaultNormalizedValue",
+                      Napi::Number::New(env, pi.defaultNormalizedValue));
+                p.Set("unitId", Napi::Number::New(env, static_cast<double>(pi.unitId)));
+                p.Set("flags", Napi::Number::New(env, static_cast<double>(pi.flags)));
+                // Current normalized value (live read from the controller).
+                Steinberg::Vst::ParamValue cur = controller_->getParamNormalized(pi.id);
+                p.Set("currentNormalizedValue", Napi::Number::New(env, cur));
+                params[static_cast<uint32_t>(k)] = p;
+            }
+        }
+        un.Set("parameters", params);
+
+        // Orphan parameters (unitId didn't match any declared unit) — attach
+        // them to the root unit so they don't disappear from the tree.
+        if (u == 0) {
+            Napi::Array orphans = Napi::Array::New(env);
+            uint32_t orphanCount = 0;
+            for (const auto& kv : paramsByUnit) {
+                if (unitById(kv.first) >= 0) continue;
+                for (Steinberg::int32 idx : kv.second) {
+                    Steinberg::Vst::ParameterInfo pi;
+                    std::memset(&pi, 0, sizeof(pi));
+                    if (controller_->getParameterInfo(idx, pi) != Steinberg::kResultTrue) continue;
+                    Napi::Object p = Napi::Object::New(env);
+                    p.Set("index", Napi::Number::New(env, static_cast<double>(idx)));
+                    p.Set("id", Napi::Number::New(env, static_cast<double>(pi.id)));
+                    p.Set("title", Napi::String::New(env, string128ToUtf8(pi.title)));
+                    p.Set("shortTitle", Napi::String::New(env, string128ToUtf8(pi.shortTitle)));
+                    p.Set("units", Napi::String::New(env, string128ToUtf8(pi.units)));
+                    p.Set("stepCount", Napi::Number::New(env, pi.stepCount));
+                    p.Set("defaultNormalizedValue",
+                          Napi::Number::New(env, pi.defaultNormalizedValue));
+                    p.Set("unitId", Napi::Number::New(env, static_cast<double>(pi.unitId)));
+                    p.Set("flags", Napi::Number::New(env, static_cast<double>(pi.flags)));
+                    Steinberg::Vst::ParamValue cur = controller_->getParamNormalized(pi.id);
+                    p.Set("currentNormalizedValue", Napi::Number::New(env, cur));
+                    orphans[orphanCount++] = p;
+                }
+            }
+            if (orphanCount > 0) {
+                un.Set("orphanParameters", orphans);
+            }
+        }
+
+        unitArr[static_cast<uint32_t>(u)] = un;
+    }
+
+    Napi::Object result = Napi::Object::New(env);
+    result.Set("units", unitArr);
+    result.Set("parameterCount", Napi::Number::New(env, paramCount));
+    result.Set("unitCount", Napi::Number::New(env, static_cast<double>(units.size())));
+    result.Set("hasUnitInfo", Napi::Boolean::New(env, hasUnits));
+    return result;
+}
+
 Napi::Value PluginInstance::GetSampleSize(const Napi::CallbackInfo& info) {
     checkAlive();
     return Napi::Number::New(info.Env(), static_cast<double>(activeSampleSize_));
@@ -1029,15 +1314,18 @@ Napi::Value PluginInstance::Process(const Napi::CallbackInfo& info) {
             }
         }
 
-        // Always refresh systemTime to the current wall-clock time when the
-        // plugin asked for it (kSystemTimeValid set). This matches typical
-        // host behavior — the host supplies a fresh nanosecond timestamp
-        // every block. If the user has not opted in (state bit clear), leave
-        // systemTime at 0.
+        // Refresh systemTime from the cached atomic (set by the JS thread via
+        // setSystemTime() / setProcessContext({ systemTime })). We NEVER call
+        // std::chrono::system_clock::now() here — that is a syscall and
+        // violates real-time audio thread constraints. The host (JS layer)
+        // is responsible for supplying a fresh timestamp from a non-RT
+        // thread if the plugin has opted in via kSystemTimeValid.
         if (processContext_.state & Steinberg::Vst::ProcessContext::kSystemTimeValid) {
-            auto nowNs = std::chrono::duration_cast<std::chrono::nanoseconds>(
-                std::chrono::system_clock::now().time_since_epoch()).count();
-            processContext_.systemTime = static_cast<int64_t>(nowNs);
+            const int64_t cached = cachedSystemTimeNs_.load(
+                std::memory_order_relaxed);
+            if (cached != 0) {
+                processContext_.systemTime = cached;
+            }
         }
 
         // Advance the persistent ProcessContext. Transport advances only
@@ -2510,6 +2798,9 @@ Napi::Value PluginInstance::SetProcessContext(const Napi::CallbackInfo& info) {
         int64_t sysTime = 0;
         if (readInt64("systemTime", &sysTime)) {
             processContext_.systemTime = sysTime;
+            // Mirror to the atomic cache so process() can read it without
+            // calling std::chrono::system_clock::now() on the audio thread.
+            cachedSystemTimeNs_.store(sysTime, std::memory_order_relaxed);
             processContext_.state |= Steinberg::Vst::ProcessContext::kSystemTimeValid;
         }
         // continuousTimeSamples (int64) — note: SDK spells "continous" (one 'u')
@@ -2560,6 +2851,30 @@ Napi::Value PluginInstance::GetProcessContextRequirements(const Napi::CallbackIn
     if (!processContextReqs_) return Napi::Number::New(env, 0);
     uint32_t mask = processContextReqs_->getProcessContextRequirements();
     return Napi::Number::New(env, static_cast<double>(mask));
+}
+
+//------------------------------------------------------------------------
+// SetSystemTime — JS-callable atomic update of cached wall-clock ns
+//------------------------------------------------------------------------
+Napi::Value PluginInstance::SetSystemTime(const Napi::CallbackInfo& info) {
+    Napi::Env env = info.Env();
+    checkAlive();
+    if (info.Length() < 1 || !info[0].IsNumber()) {
+        throwNapiError(env, ErrorCode::InvalidParameter,
+                       "setSystemTime(nanos) requires a number (nanoseconds since epoch)");
+    }
+    int64_t ns = static_cast<int64_t>(info[0].As<Napi::Number>().Int64Value());
+    cachedSystemTimeNs_.store(ns, std::memory_order_relaxed);
+    if (ns != 0) {
+        processContext_.state |= Steinberg::Vst::ProcessContext::kSystemTimeValid;
+        processContext_.systemTime = ns;
+    } else {
+        // Caller requested disabling systemTime population: clear the state
+        // bit so process() doesn't overwrite systemTime with the cached
+        // (now-zero) value.
+        processContext_.state &= ~Steinberg::Vst::ProcessContext::kSystemTimeValid;
+    }
+    return env.Undefined();
 }
 
 //------------------------------------------------------------------------
