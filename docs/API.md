@@ -6,6 +6,7 @@ This document is the authoritative reference for the `nvst3-host` module. It mir
 - [Host](#host)
 - [PluginInstance](#plugininstance)
 - [0.2.0 — VST3 Spec Coverage](#020--vst3-spec-coverage)
+- [0.3.0 — Audit-driven fixes](#030--audit-driven-fixes)
 - [Types](#types)
 - [Enums](#enums)
 - [Error Codes](#error-codes)
@@ -1552,6 +1553,170 @@ Host-side convention bitmask describing which `ChannelContextInfo` fields are pr
 ### Error Codes
 
 No new error codes were added in 0.2.0. All new methods throw one of the existing 14 `VST3_*` codes (see [Error Codes](#error-codes)); the most common are `VST3_INVALID_PARAMETER` (bad argument or wrong state) and `VST3_UNKNOWN` (plugin does not implement the queried SDK interface).
+
+---
+
+## 0.3.0 — Audit-driven fixes
+
+This section documents the API surface added in 0.3.0 to close the host-side audit findings. All changes are additive or correctness-only; existing callers are unaffected.
+
+### Module-level
+
+#### `SUPPORTED_TRIPLES: readonly string[]`
+
+The list of platform triples the loader recognizes. As of 0.3.0 the value is:
+
+```js
+['win32-x64', 'darwin-x64', 'darwin-arm64', 'linux-x64', 'linux-arm64']
+```
+
+All five entries are kept for source-build discovery. Prebuilt binaries ship for `win32-x64`, `darwin-arm64`, `linux-x64`, and `linux-arm64` (4 binaries). `darwin-x64` (Intel Macs) and other x86 targets may not have prebuilts available because the corresponding GitHub Actions runners are no longer provided; the loader falls back to a source build via `node-gyp` in that case.
+
+### PluginInstance — Diagnostics
+
+#### `getPluginInfo(): object`
+
+Returns a comprehensive snapshot of the plugin's state and capabilities. Intended for diagnostics and debugging — production callers should prefer the more targeted methods (`getInfo()`, `getLatency()`, `getParameterCount()`, etc.) which return typed objects.
+
+**Returns**: an object with the following shape:
+
+```ts
+{
+  // Static info (mirrors getInfo())
+  name, vendor, version, category, subCategories, sdkVersion, classId: string,
+  // Counts
+  numAudioInputs, numAudioOutputs, numMidiInputs, numMidiOutputs: number,
+  parameterCount: number,
+  hasController, isSingleComponent: boolean,
+  // Live state
+  active, processing, faulted, disposed: boolean,
+  sampleSize: 32 | 64,
+  processMode: number,           // ProcessMode enum
+  sampleRate, maxBlockSize: number,
+  // Latency / tail / sample-size capability (present when audioProcessor is)
+  latencySamples: number,
+  tailSamples: number | Infinity,
+  canProcessSample32, canProcessSample64: boolean,
+  // Buses (one array per category)
+  audioInputBuses:  Array<{ index, name, channelCount, busType, flags, active, speakerArrangement? }>,
+  audioOutputBuses: Array<{ index, name, channelCount, busType, flags, active, speakerArrangement? }>,
+  eventInputBuses:  Array<{ index, name, channelCount, busType, flags, active }>,
+  eventOutputBuses: Array<{ index, name, channelCount, busType, flags, active }>,
+  // Optional interface availability
+  interfaces: {
+    midiMapping, unitInfo, programListData, unitData, noteExpression,
+    keyswitchController, processContextRequirements, audioPresentationLatency,
+    prefetchableSupport, channelContextInfoListener, editController2: boolean
+  }
+}
+```
+
+**Throws**: `VST3_FAULTED` if the instance is disposed or faulted.
+
+```js
+const info = plugin.getPluginInfo();
+if (!info.interfaces.noteExpression) {
+  console.log('Plugin does not expose note expressions');
+}
+```
+
+#### `getParameterTree(): object[]`
+
+Returns every parameter reported by the edit controller, grouped by unit. Each unit is one element of the returned array. Parameters whose `unitId` does not match any declared unit (or whose plugin does not implement `IUnitInfo`) are collected under a synthetic root unit.
+
+**Returns**: an array of unit nodes:
+
+```ts
+interface ParameterTreeNode {
+  unitId: number;            // UnitID (0 = root when IUnitInfo not implemented)
+  unitName: string;          // UTF-8 unit name, or "" for the synthetic root
+  parentUnitId: number;      // -1 for the root, otherwise the parent's UnitID
+  programListIndices: number[]; // Empty if the unit has no program lists
+  parameters: Array<{
+    id: number;              // ParameterID
+    title: string;           // UTF-8 title
+    shortTitle: string;      // UTF-8 short title (may be empty)
+    unitId: number;          // The unit the parameter reports
+    stepCount: number;       // 0 = continuous, >0 = discrete step count
+    flags: number;           // ParameterFlags bitmask
+    currentNormalizedValue: number; // 0..1, read live from the controller
+  }>;
+}
+```
+
+**Throws**: `VST3_FAULTED` if the instance is disposed or faulted, or `VST3_UNKNOWN` if no edit controller is present.
+
+```js
+const tree = plugin.getParameterTree();
+for (const unit of tree) {
+  console.log(`Unit ${unit.unitName || '<root>'} (${unit.parameters.length} params)`);
+  for (const p of unit.parameters) {
+    console.log(`  ${p.title}: ${p.currentNormalizedValue.toFixed(3)}`);
+  }
+}
+```
+
+### PluginInstance — Real-time system time
+
+#### `setSystemTime(nanos: number): void`
+
+Updates the host's cached system-time value used to populate `ProcessContext::systemTime` on subsequent `process()` calls. The cache is a `std::atomic<int64_t>` and the audio thread reads it without any syscall.
+
+Pass `0` to disable `systemTime` population — the `kSystemTimeValid` bit in `ProcessContext::state` is cleared and `systemTime` stays at its previous value.
+
+**Parameters**:
+
+| Name    | Type     | Description                                                                 |
+|---------|----------|-----------------------------------------------------------------------------|
+| `nanos` | `number` | Nanoseconds since the Unix epoch (e.g. `Date.now() * 1e6`). Pass `0` to disable. |
+
+**Throws**: `VST3_INVALID_PARAMETER` if `nanos` is not a finite number, or `VST3_FAULTED` if the instance is disposed or faulted.
+
+The recommended pattern is to call this from a `setInterval` on the JS thread at the host's preferred granularity (e.g. every 50 ms). Plugins that declare `ProcessContextRequirementFlags::kSystemTime` will then receive a monotonic `systemTime` that advances between blocks without the host incurring a syscall on the audio thread.
+
+```js
+setInterval(() => plugin.setSystemTime(Date.now() * 1e6), 50);
+// Later, to disable:
+plugin.setSystemTime(0);
+```
+
+#### `process()` — `systemTime` semantics change
+
+In 0.1.0 / 0.2.0, `process()` called `std::chrono::system_clock::now()` on the audio thread and stored the result in `ProcessContext::systemTime`, with `kSystemTimeValid` always set. As of 0.3.0:
+
+- `systemTime` is read from the cache populated by `setSystemTime()`.
+- `kSystemTimeValid` is only set when `setSystemTime()` has been called with a non-zero value since the last `setActive(true)`.
+- If `setSystemTime()` has never been called, `systemTime` remains `0` and `kSystemTimeValid` stays clear. Plugins that gate behavior on `kSystemTimeValid` will then see the bit unset.
+
+### PluginInstance — Stream attributes (host-side)
+
+`BufferStream` now implements `Vst::IStreamAttributes` in addition to `IBStream`. Plugins that probe `IStreamAttributes` during `setState`/`getState` (to learn whether they are loading a project or a preset, and from which file path) will receive:
+
+- `getFileName()` — the host-supplied UTF-16 file name (empty by default).
+- `getAttributes()` — an `IAttributeList` lazily backed by the SDK's `HostAttributeList`.
+
+The JS surface does not expose `BufferStream` directly — `saveState()` and `loadState()` continue to take and return `Buffer`. The host-side mutators (`setFileName`, `setStateType`, `setFilePath`) are C++-only and are used internally when a future `loadPresetFile()` API is added. For now, plugins that probe `IStreamAttributes` get a valid (empty) attribute list rather than `nullptr`, which fixes a class of "preset context unknown" warnings.
+
+### CI matrix
+
+The prebuilt matrix is now:
+
+| Triple        | GitHub Actions runner       | Prebuilt shipped |
+|---------------|------------------------------|------------------|
+| `win32-x64`   | `windows-latest`             | Yes              |
+| `darwin-x64`  | *(retired)*                  | No — source build on `darwin-arm64` |
+| `darwin-arm64`| `macos-latest`                | Yes              |
+| `linux-x64`   | `ubuntu-latest`              | Yes              |
+| `linux-arm64` | `ubuntu-24.04-arm`           | Yes              |
+
+`darwin-x64` (Intel Macs) and other x86 targets may also be unavailable on GitHub Actions; the loader's source-build fallback is the supported path for those triples.
+
+### Out of scope (deferred to a future spec)
+
+- **UMP / MIDI 2.0** — VST3.7+ Event List UMP variants are not yet wired through the JS MIDI API. Full UMP support requires extending the `Event` struct, mapping UMP 1.x/2.x message bytes to VST3 `LegacyMIDICCOutEvent` / `kNoteExpressionValue` events, and adding a new `addUmpMessage(group, status, bytes)` JS surface. This is a major API addition, not a bug fix.
+- **Async / batch processing worker thread** — `process()` remains synchronous. VST3 plugins are NOT thread-safe by design: the SDK contract requires `IAudioProcessor::process` to be called from the host's single audio thread. The correct async pattern for VST3 hosts is to use a real-time audio thread on the C++ side with a lock-free ring buffer to the JS thread; that's a substantial architecture addition, deferred to a future spec.
+- DAW-style integration test suite (VST3 Validator smoke test is the current substitute).
+- Code signing / notarization for prebuilt macOS binaries.
 
 ---
 

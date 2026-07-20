@@ -186,6 +186,94 @@ export interface PluginInstanceInfo {
     isSingleComponent: boolean;
 }
 
+// Added in 0.3.0 — diagnostic snapshot returned by `plugin.getPluginInfo()`.
+export interface PluginInfoBus {
+    index: number;
+    name: string;
+    channelCount: number;
+    busType: number;    // BusType enum value
+    flags: number;
+    active: boolean;
+    /** Present for audio buses only — the SpeakerArrangement reported by the plugin. */
+    speakerArrangement?: number;
+}
+
+export interface PluginInfoInterfaces {
+    midiMapping: boolean;
+    unitInfo: boolean;
+    programListData: boolean;
+    unitData: boolean;
+    noteExpression: boolean;
+    keyswitchController: boolean;
+    processContextRequirements: boolean;
+    audioPresentationLatency: boolean;
+    prefetchableSupport: boolean;
+    channelContextInfoListener: boolean;
+    editController2: boolean;
+}
+
+export interface PluginInfoSnapshot {
+    // Static info (mirrors PluginInstanceInfo)
+    name: string;
+    vendor: string;
+    version: string;
+    category: string;
+    subCategories: string;
+    sdkVersion: string;
+    classId: string;
+    // Counts
+    numAudioInputs: number;
+    numAudioOutputs: number;
+    numMidiInputs: number;
+    numMidiOutputs: number;
+    parameterCount: number;
+    hasController: boolean;
+    isSingleComponent: boolean;
+    // Live state
+    active: boolean;
+    processing: boolean;
+    faulted: boolean;
+    disposed: boolean;
+    sampleSize: 32 | 64;
+    processMode: number;
+    sampleRate: number;
+    maxBlockSize: number;
+    // Latency / tail / sample-size capability (present when audioProcessor exists)
+    latencySamples?: number;
+    /** May be `Number.POSITIVE_INFINITY` when the plugin reports `kInfiniteTail`. */
+    tailSamples?: number;
+    canProcessSample32?: boolean;
+    canProcessSample64?: boolean;
+    // Buses
+    audioInputBuses: PluginInfoBus[];
+    audioOutputBuses: PluginInfoBus[];
+    eventInputBuses: PluginInfoBus[];
+    eventOutputBuses: PluginInfoBus[];
+    // Optional interface availability
+    interfaces: PluginInfoInterfaces;
+}
+
+// Added in 0.3.0 — grouped parameter tree returned by `plugin.getParameterTree()`.
+export interface ParameterTreeEntry {
+    id: number;
+    title: string;
+    shortTitle: string;
+    unitId: number;
+    stepCount: number;
+    flags: number;
+    /** Live read of the parameter's current normalized [0,1] value. */
+    currentNormalizedValue: number;
+}
+
+export interface ParameterTreeNode {
+    unitId: number;
+    unitName: string;
+    /** -1 for the root unit, otherwise the parent unit's ID. */
+    parentUnitId: number;
+    programListIndices: number[];
+    parameters: ParameterTreeEntry[];
+}
+
 export interface ProcessBlock {
     /**
      * Per-channel input audio buffers. Each Float32Array (when sampleSize=32)
@@ -577,6 +665,23 @@ export class PluginInstance {
     getLatency(): number;
 
     /**
+     * Comprehensive diagnostic snapshot combining static info, live state,
+     * latency / tail / sample-size capability, all four bus categories, and
+     * a boolean map of the 11 optional VST3 interfaces the plugin exposes.
+     * Added in 0.3.0. Intended for diagnostics — production callers should
+     * prefer the more targeted methods (`getInfo`, `getLatency`, etc.).
+     */
+    getPluginInfo(): PluginInfoSnapshot;
+
+    /**
+     * Returns every parameter reported by the edit controller, grouped by
+     * unit (root unit for orphans). Each unit is one element of the returned
+     * array; each parameter includes its current normalized value read live
+     * from the controller. Added in 0.3.0.
+     */
+    getParameterTree(): ParameterTreeNode[];
+
+    /**
      * Activate or deactivate the plugin. Activating calls
      * `IAudioProcessor::setupProcessing`, `IComponent::setActive(true)`,
      * and `IAudioProcessor::setActive(true)` in order.
@@ -882,6 +987,23 @@ export class PluginInstance {
      * fields each block (and to always set the requested state bits).
      */
     getProcessContextRequirements(): number;
+
+    //--- System time cache (added in 0.3.0) ---------------------------
+    /**
+     * Update the host's cached system-time value used to populate
+     * `ProcessContext::systemTime` on subsequent `process()` calls. The
+     * cache is a `std::atomic<int64_t>` and the audio thread reads it
+     * without any syscall — the previous behavior of calling
+     * `std::chrono::system_clock::now()` on the audio thread is removed.
+     *
+     * Pass `0` to disable `systemTime` population — the
+     * `kSystemTimeValid` bit in `ProcessContext::state` is cleared.
+     *
+     * @throws {NstError} with code 'VST3_INVALID_PARAMETER' if `nanos`
+     *   is not a finite number.
+     * @throws {NstError} with code 'VST3_FAULTED' if disposed or faulted.
+     */
+    setSystemTime(nanos: number): void;
 
     //--- IAudioPresentationLatency ------------------------------------
     /**

@@ -22,8 +22,8 @@
 namespace nst3 {
 
 class BufferStream final
-    : public Steinberg::U::Implements<Steinberg::U::Directly<Steinberg::IBStream>,
-                                      Steinberg::U::Directly<Steinberg::Vst::IStreamAttributes>> {
+    : public Steinberg::U::Implements<Steinberg::U::Directly<Steinberg::IBStream,
+                                                              Steinberg::Vst::IStreamAttributes>> {
 public:
     BufferStream();
     ~BufferStream() noexcept override;
