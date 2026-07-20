@@ -68,15 +68,39 @@ function resolveBundlePath() {
 function verifyBundle(bundlePath) {
     if (!bundlePath || !fs.existsSync(bundlePath)) return false;
     if (process.platform === 'win32') return true;
-    // Linux: Gain.vst3/Contents/x86_64-linux/Gain.so
+    // Linux: Gain.vst3/Contents/<machine>-linux/Gain.so
+    //   <machine> = `uname -m` output (x86_64 on amd64, aarch64 on arm64).
+    //   The VST3 SDK module_linux.cpp reads unameData.machine at load time,
+    //   so we mirror that here. Fall back to a glob if the spawn fails.
     // macOS:  Gain.vst3/Contents/MacOS/Gain
     if (process.platform === 'darwin') {
         const so = path.join(bundlePath, 'Contents', 'MacOS', 'Gain');
         return fs.existsSync(so);
     }
     if (process.platform === 'linux') {
-        const so = path.join(bundlePath, 'Contents', 'x86_64-linux', 'Gain.so');
-        return fs.existsSync(so);
+        // Try the host's uname -m first.
+        const unameRes = spawnSync('uname', ['-m'], { stdio: 'pipe' });
+        if (unameRes.status === 0) {
+            const machine = unameRes.stdout.toString().trim();
+            if (machine) {
+                const so = path.join(bundlePath, 'Contents', `${machine}-linux`, 'Gain.so');
+                if (fs.existsSync(so)) return true;
+            }
+        }
+        // Fallback: scan Contents/*-linux/ for Gain.so.
+        try {
+            const contentsDir = path.join(bundlePath, 'Contents');
+            if (fs.existsSync(contentsDir)) {
+                for (const entry of fs.readdirSync(contentsDir)) {
+                    if (!entry.endsWith('-linux')) continue;
+                    const so = path.join(contentsDir, entry, 'Gain.so');
+                    if (fs.existsSync(so)) return true;
+                }
+            }
+        } catch {
+            // ignore — fall through to return false
+        }
+        return false;
     }
     return false;
 }

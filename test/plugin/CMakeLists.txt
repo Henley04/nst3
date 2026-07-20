@@ -94,15 +94,21 @@ if(APPLE)
     )
 elseif(UNIX)
     target_sources(Gain PRIVATE ${VST3_SDK_ROOT}/public.sdk/source/main/linuxmain.cpp)
-    # Bundle layout on Linux: Gain.vst3/Contents/x86_64-linux/Gain.so
+    # Bundle layout on Linux: Gain.vst3/Contents/<machine>-linux/Gain.so
+    # The <machine> segment comes from `uname -m` (VST3 SDK module_linux.cpp
+    # reads unameData.machine), so it is `x86_64` on amd64 and `aarch64` on
+    # arm64. We compute it via CMAKE_HOST_SYSTEM_PROCESSOR so the bundle path
+    # matches what the host loader expects on every arch.
+    set(GAIN_LINUX_ARCH ${CMAKE_HOST_SYSTEM_PROCESSOR})
+    set(GAIN_LINUX_LIBDIR "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/${GAIN_LINUX_ARCH}-linux")
     # Use a per-config output dir so the .so always lands at a known path.
     set_target_properties(Gain PROPERTIES
         PREFIX ""
         OUTPUT_NAME "Gain"
         SUFFIX ".so"
-        LIBRARY_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/x86_64-linux"
-        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/x86_64-linux"
-        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${CMAKE_BINARY_DIR}/Gain.vst3/Contents/x86_64-linux"
+        LIBRARY_OUTPUT_DIRECTORY "${GAIN_LINUX_LIBDIR}"
+        LIBRARY_OUTPUT_DIRECTORY_RELEASE "${GAIN_LINUX_LIBDIR}"
+        LIBRARY_OUTPUT_DIRECTORY_DEBUG "${GAIN_LINUX_LIBDIR}"
     )
     target_link_libraries(Gain PRIVATE dl pthread)
     # NOTE: -fvisibility=hidden omitted (see macOS comment above).
